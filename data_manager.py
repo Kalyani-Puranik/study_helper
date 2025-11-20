@@ -1,19 +1,17 @@
 # data_manager.py
 import os
 import json
-from typing import Any
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
 
 
-def _file_path(name: str) -> str:
-    # name should be like "todos.json"
+def _file_path(name):
     return os.path.join(DATA_DIR, name)
 
 
-def load_json(name: str, default: Any):
+def load_json(name, default):
     """
     Load JSON from data/<name>. If missing or invalid, write default and return it.
     """
@@ -25,14 +23,13 @@ def load_json(name: str, default: Any):
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception:
-        # Corrupted file -> replace with default
         save_json(name, default)
         return default
 
 
-def save_json(name: str, data: Any):
+def save_json(name, data):
     """
-    Write JSON to data/<name> atomically-ish (simple).
+    Write JSON to data/<name>.
     """
     path = _file_path(name)
     tmp = path + ".tmp"
@@ -41,6 +38,26 @@ def save_json(name: str, data: Any):
     try:
         os.replace(tmp, path)
     except Exception:
-        # fallback
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
+
+
+# Convenience wrappers -------------------------------------------------
+
+
+def load_users():
+    # {username: password}
+    return load_json("users.json", {})
+
+
+def save_users(users):
+    save_json("users.json", users)
+
+
+def load_settings():
+    # {"theme": "Pink", "dark": False, "last_user": ""}
+    return load_json("settings.json", {"theme": "Pink", "dark": False, "last_user": ""})
+
+
+def save_settings(settings):
+    save_json("settings.json", settings)
