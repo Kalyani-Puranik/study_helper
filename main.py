@@ -2,6 +2,9 @@
 import sys
 import os
 
+from CircularProgress import CircularProgress
+from PyQt5.QtWidgets import QHBoxLayout, QWidget
+
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QStackedWidget, QComboBox
@@ -203,6 +206,31 @@ class MainWindow(QMainWindow):
         win.resize(800, 550)
         win.show()
         self.child_windows.append(win)
+    
+
+class DashboardPage(QWidget):
+    def __init__(self, switch, open_new, get_user, logout):
+        super().__init__()
+        
+        layout = QVBoxLayout(self)
+
+        # --- NEW: PROGRESS SUMMARY ROW ---
+        row = QHBoxLayout()
+        row.setSpacing(40)
+        
+        self.todo_progress = CircularProgress(40, text="Tasks Done", color="#f58bc4")
+        self.timer_progress = CircularProgress(70, text="Focus", color="#ff9bd4")
+        self.flash_progress = CircularProgress(20, text="Flashcards", color="#ff7fc5")
+
+        row.addWidget(self.todo_progress)
+        row.addWidget(self.timer_progress)
+        row.addWidget(self.flash_progress)
+
+        wrapper = QWidget()
+        wrapper.setLayout(row)
+
+        layout.addWidget(wrapper, alignment=Qt.AlignCenter)
+
 
 
 def main():
