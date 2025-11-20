@@ -1,126 +1,170 @@
 # main.py
 import sys
-from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QStackedWidget, QHBoxLayout, QLabel, QPushButton
+import os
+from PyQt5.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QLabel, QPushButton, QStackedWidget, QComboBox
+)
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFontDatabase
 
-from themes import LIGHT_STYLESHEET, DARK_STYLESHEET
+from data_manager import load_settings, save_settings
+from themes import build_stylesheet
 from pages import (
-    DashboardPage, TodoPage, NotesPage, FlashcardsPage,
-    FlashcardsPage as FlashcardsPageDuplicate,  # safe alias if needed
-    FlashcardsPage as FlashcardPage,
+    LoginPage, DashboardPage, TodoPage, NotesPage,
+    FlashcardsPage, ResourcesPage, SchedulePage,
+    ClipartPage, TimerPage, PageWindow
 )
-# NOTE: above aliases won't break; we'll import the pages again directly below to be explicit
-from pages import (
-    DashboardPage, TodoPage, NotesPage, FlashcardsPage,
-    ResourcesPage, SchedulePage, TimerPage, ClipartPage
-)
-from data_manager import load_json  # to ensure data dir exists & defaults created
-
-# Ensure default files exist
-load_json("todos.json", [])
-load_json("resources.json", [])
-load_json("flashcards.json", [])
-load_json("notes.json", {"content": ""})
-load_json("schedule.json", [])
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Student Helper Dashboard")
-        self.setMinimumSize(900, 600)
+        self.setWindowTitle("Student Helper")
+        self.resize(1000, 650)  # still resizable smaller
 
-        self.theme_mode = "light"
+        self.current_user: str | None = None
+
+        # load handwriting font if present
+        self.font_name = self.load_handwriting_font()
+
+        self.settings = load_settings()
+        self.theme_name = self.settings.get("theme", "Pink")
+        self.dark_mode = self.settings.get("dark", False)
 
         central = QWidget()
+        root = QVBoxLayout()
+        central.setLayout(root)
         self.setCentralWidget(central)
-        root_layout = QVBoxLayout()
-        central.setLayout(root_layout)
 
-        # top bar
+        # top bar --------------------------------------------------------
         top_bar = QHBoxLayout()
-        title_label = QLabel("Student Helper Dashboard")
-        title_label.setFont(QFont("Arial", 14, QFont.Bold))
-        title_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
-        self.theme_button = QPushButton("🌙 Dark Mode")
-        self.theme_button.setMaximumWidth(140)
-        self.theme_button.clicked.connect(self.toggle_theme)
+        self.title_label = QLabel("Student Helper")
+        self.title_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.title_label.setStyleSheet("font-size: 18px; font-weight: 600;")
+        top_bar.addWidget(self.title_label)
 
-        top_bar.addWidget(title_label)
         top_bar.addStretch()
-        top_bar.addWidget(self.theme_button)
-        root_layout.addLayout(top_bar)
 
-        # stack
+        self.theme_combo = QComboBox()
+        self.theme_combo.addItems(["Pink", "Purple", "Green", "Yellow", "Blue", "Mono"])
+        self.theme_combo.setCurrentText(self.theme_name)
+        self.theme_combo.currentTextChanged.connect(self.change_theme)
+        top_bar.addWidget(self.theme_combo)
+
+        self.dark_btn = QPushButton("Dark Mode" if not self.dark_mode else "Light Mode")
+        self.dark_btn.clicked.connect(self.toggle_dark)
+        top_bar.addWidget(self.dark_btn)
+
+        root.addLayout(top_bar)
+
+        # stacked pages --------------------------------------------------
         self.stack = QStackedWidget()
-        root_layout.addWidget(self.stack)
+        root.addWidget(self.stack)
 
-        # instantiate pages with goto_page callable
-        self.dashboard_page = DashboardPage(self.switch_to_page)
-        self.todo_page = TodoPage(self.switch_to_page)
-        self.notes_page = NotesPage(self.switch_to_page)
-        self.flashcards_page = FlashcardsPage(self.switch_to_page)
-        self.resources_page = ResourcesPage(self.switch_to_page)
-        self.schedule_page = SchedulePage(self.switch_to_page)
-        self.timer_page = TimerPage(self.switch_to_page)
-        self.clipart_page = ClipartPage(self.switch_to_page)
+        # create pages
+        self.pages = {}
 
-        # map and add
-        self.page_map = {
-            "dashboard": 0,
-            "todo": 1,
-            "notes": 2,
-            "flashcards": 3,
-            "resources": 4,
-            "schedule": 5,
-            "timer": 6,
-            "clipart": 7,
-        }
+        self.pages["login"] = LoginPage(self)
+        self.pages["dashboard"] = DashboardPage(self)
+        self.pages["todo"] = TodoPage(self)
+        self.pages["notes"] = NotesPage(self)
+        self.pages["flashcards"] = FlashcardsPage(self)
+        self.pages["resources"] = ResourcesPage(self)
+        self.pages["schedule"] = SchedulePage(self)
+        self.pages["clipart"] = ClipartPage(self)
+        self.pages["timer"] = TimerPage(self)
 
-        self.stack.addWidget(self.dashboard_page)   # 0
-        self.stack.addWidget(self.todo_page)        # 1
-        self.stack.addWidget(self.notes_page)       # 2
-        self.stack.addWidget(self.flashcards_page)  # 3
-        self.stack.addWidget(self.resources_page)   # 4
-        self.stack.addWidget(self.schedule_page)    # 5
-        self.stack.addWidget(self.timer_page)       # 6
-        self.stack.addWidget(self.clipart_page)     # 7
+        for key in ["login", "dashboard", "todo", "notes",
+                    "flashcards", "resources", "schedule",
+                    "clipart", "timer"]:
+            self.stack.addWidget(self.pages[key])
 
-        self.stack.setCurrentIndex(self.page_map["dashboard"])
+        # decide start page
+        if self.settings.get("last_user"):
+            self.current_user = self.settings["last_user"]
+            self.switch_to("dashboard")
+        else:
+            self.switch_to("login")
+
         self.apply_theme()
 
-    def toggle_theme(self):
-        self.theme_mode = "dark" if self.theme_mode == "light" else "light"
-        self.apply_theme()
+    # ------------ theming & fonts ------------
+
+    def load_handwriting_font(self) -> str:
+        assets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
+        ttf_path = os.path.join(assets_dir, "handwriting.ttf")
+        if os.path.exists(ttf_path):
+            font_id = QFontDatabase.addApplicationFont(ttf_path)
+            families = QFontDatabase.applicationFontFamilies(font_id)
+            if families:
+                return families[0]
+        return "Comic Sans MS"
 
     def apply_theme(self):
-        if self.theme_mode == "light":
-            self.setStyleSheet(LIGHT_STYLESHEET)
-            self.theme_button.setText("🌙 Dark Mode")
-        else:
-            self.setStyleSheet(DARK_STYLESHEET)
-            self.theme_button.setText("☀ Light Mode")
-        # refresh dashboard/page states if they have refresh methods
-        for page in (self.dashboard_page, self.todo_page, self.notes_page,
-                     self.flashcards_page, self.resources_page, self.schedule_page):
-            if hasattr(page, "refresh"):
-                try:
-                    page.refresh()
-                except Exception:
-                    pass
+        sheet = build_stylesheet(self.theme_name, self.dark_mode, self.font_name)
+        self.setStyleSheet(sheet)
+        self.dark_btn.setText("Dark Mode" if not self.dark_mode else "Light Mode")
 
-    def switch_to_page(self, page_name: str):
-        idx = self.page_map.get(page_name, 0)
-        self.stack.setCurrentIndex(idx)
-        # refresh the page we switched to if possible
-        widget = self.stack.currentWidget()
-        if hasattr(widget, "refresh"):
-            try:
-                widget.refresh()
-            except Exception:
-                pass
+    def change_theme(self, name: str):
+        self.theme_name = name
+        self.apply_theme()
+        self.save_current_settings()
+
+    def toggle_dark(self):
+        self.dark_mode = not self.dark_mode
+        self.apply_theme()
+        self.save_current_settings()
+
+    def save_current_settings(self):
+        self.settings["theme"] = self.theme_name
+        self.settings["dark"] = self.dark_mode
+        self.settings["last_user"] = self.current_user or ""
+        save_settings(self.settings)
+
+    # ------------ navigation ------------
+
+    def switch_to(self, key: str):
+        # stack index order matches keys insertion above
+        index = ["login", "dashboard", "todo", "notes",
+                 "flashcards", "resources", "schedule",
+                 "clipart", "timer"].index(key)
+        self.stack.setCurrentIndex(index)
+
+    def set_current_user(self, username: str):
+        self.current_user = username
+        self.save_current_settings()
+        self.title_label.setText(f"Student Helper — {username}")
+
+    def logout(self):
+        self.current_user = None
+        self.save_current_settings()
+        self.title_label.setText("Student Helper")
+        self.switch_to("login")
+
+    # ------------ multi-window support ------------
+
+    def open_in_new_window(self, key: str):
+        cls_map = {
+            "dashboard": DashboardPage,
+            "todo": TodoPage,
+            "notes": NotesPage,
+            "flashcards": FlashcardsPage,
+            "resources": ResourcesPage,
+            "schedule": SchedulePage,
+            "clipart": ClipartPage,
+            "timer": TimerPage,
+        }
+        cls = cls_map.get(key)
+        if not cls:
+            return
+        win = PageWindow(self, cls, f"{key.title()} — window")
+        win.show()
+
+    # small helper for old name
+    def switch_to_page(self, key: str):
+        self.switch_to(key)
 
 
 def main():
