@@ -96,7 +96,6 @@ LIGHT_THEMES = {
 }
 
 DARK_THEMES = {
-    # darker, but not pure black — comfy dark mode
     "Pink": dict(
         bg="#241823",
         card_bg="#2f222e",
@@ -153,11 +152,13 @@ DARK_THEMES = {
     ),
 }
 
-DEFAULT_FONT = "Comic Sans MS"  # will be overridden if handwriting.ttf is loaded
+DEFAULT_FONT = "Comic Sans MS"  # gets overridden if you load a handwriting .ttf
 
 
-def build_stylesheet(theme_name: str, dark: bool, font: str | None = None) -> str:
+def build_stylesheet(theme_name, dark, font=None):
     base = DARK_THEMES if dark else LIGHT_THEMES
-    theme = base.get(theme_name, base["Pink"]).copy()
+    if theme_name not in base:
+        theme_name = "Pink"
+    theme = base[theme_name].copy()
     theme["font"] = font or DEFAULT_FONT
     return BASE_WIDGETS.format(**theme)
