@@ -2,12 +2,23 @@
 from PyQt5.QtWidgets import (
     QWidget, QPushButton, QLabel, QVBoxLayout, QHBoxLayout,
     QLineEdit, QTextEdit, QListWidget, QListWidgetItem,
-    QFileDialog, QComboBox, QMessageBox
+    QComboBox, QMessageBox, QCalendarWidget,
+    QGraphicsOpacityEffect, QGridLayout
 )
-from PyQt5.QtCore import Qt, QUrl, QTimer
-from PyQt5.QtGui import QDesktopServices, QIcon, QPixmap, QPainter, QColor
+from PyQt5.QtCore import (
+    Qt, QUrl, QTimer, QPropertyAnimation,
+    pyqtProperty, QRectF
+)
+from PyQt5.QtGui import (
+    QDesktopServices, QIcon, QPixmap, QPainter,
+    QColor, QPen, QFont
+)
 
-from data_manager import load_json, save_json
+from data_manager import (
+    load_json, save_json,
+    load_users, save_users,
+    load_settings, save_settings
+)
 
 # ---------- SHARED STYLES (NO COLORS HERE; THEMES HANDLE COLORS) ----------
 
@@ -26,7 +37,7 @@ TEXT_STYLE = "font-size: 14px;"
 
 
 def make_open_window_icon(size=20):
-    """Draws a tiny square+plus icon programmatically so no external file needed."""
+    """Tiny drawn icon for 'open in new window'."""
     pix = QPixmap(size, size)
     pix.fill(Qt.transparent)
     p = QPainter(pix)
@@ -47,6 +58,72 @@ def make_open_window_icon(size=20):
     return QIcon(pix)
 
 
+# ---------------------------- CIRCULAR PROGRESS WIDGET ----------------------------
+
+class CircularProgress(QWidget):
+    """
+    Cute pastel circular progress (0–100%) with smooth animation.
+    """
+    def __init__(self, size=110, thickness=10, color="#f29ac5", bg="#e8d8e2"):
+        super().__init__()
+        self._value = 0
+        self.size = size
+        self.thickness = thickness
+        self.progress_color = QColor(color)
+        self.bg_color = QColor(bg)
+
+        self.setMinimumSize(size, size)
+
+        self.anim = QPropertyAnimation(self, b"value")
+        self.anim.setDuration(400)
+
+    def getValue(self):
+        return self._value
+
+    def setValue(self, v):
+        v = max(0, min(100, int(v)))
+        self._value = v
+        self.update()
+
+    value = pyqtProperty(int, fget=getValue, fset=setValue)
+
+    def setValueAnimated(self, v):
+        v = max(0, min(100, int(v)))
+        self.anim.stop()
+        self.anim.setStartValue(self._value)
+        self.anim.setEndValue(v)
+        self.anim.start()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        rect = QRectF(
+            self.thickness / 2,
+            self.thickness / 2,
+            self.size - self.thickness,
+            self.size - self.thickness,
+        )
+
+        # background circle
+        pen = QPen(self.bg_color, self.thickness)
+        pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawEllipse(rect)
+
+        # progress arc
+        pen.setColor(self.progress_color)
+        painter.setPen(pen)
+        angle = int(360 * (self._value / 100))
+        painter.drawArc(rect, -90 * 16, -angle * 16)
+
+        # text inside (%)
+        painter.setPen(self.progress_color.darker(130))
+        painter.setFont(QFont("Avenir", 14, QFont.Bold))
+        painter.drawText(self.rect(), Qt.AlignCenter, f"{self._value}%")
+
+
 # ================= BASE PAGE =================
 
 class BasePage(QWidget):
@@ -55,7 +132,7 @@ class BasePage(QWidget):
         self.goto_page = goto_page
         self.standalone = standalone
 
-    def add_back(self, layout):
+    def add_back(self, layout: QVBoxLayout):
         if self.goto_page is not None and not self.standalone:
             back = QPushButton("← Back to Dashboard")
             back.setStyleSheet(BUTTON_STYLE)
@@ -106,7 +183,7 @@ class LoginPage(QWidget):
 
         self.setLayout(layout)
 
-        settings = load_json("settings.json", {"theme": "Pink", "dark": False, "last_user": ""})
+        settings = load_settings()
         last = settings.get("last_user")
         if last:
             self.username_input.setText(last)
@@ -124,7 +201,7 @@ class LoginPage(QWidget):
         if not username:
             return
 
-        users = load_json("users.json", {})
+        users = load_users()
         if username not in users:
             QMessageBox.warning(self, "User not found", "This username does not exist. Try signing up.")
             return
@@ -139,20 +216,20 @@ class LoginPage(QWidget):
         if not username:
             return
 
-        users = load_json("users.json", {})
+        users = load_users()
         if username in users:
             QMessageBox.warning(self, "User exists", "This username is already taken. Try logging in.")
             return
 
         users[username] = password
-        save_json("users.json", users)
+        save_users(users)
         QMessageBox.information(self, "Account created", "Your account has been created.")
         self.finish_login(username)
 
     def finish_login(self, username):
-        settings = load_json("settings.json", {"theme": "Pink", "dark": False, "last_user": ""})
+        settings = load_settings()
         settings["last_user"] = username
-        save_json("settings.json", settings)
+        save_settings(settings)
 
         self.on_login(username)
         self.goto_page("dashboard")
@@ -187,13 +264,90 @@ class DashboardPage(QWidget):
 
         main.addLayout(top_row)
 
+        # user label
         self.user_label = QLabel("")
         self.user_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.user_label.setStyleSheet("margin-bottom: 10px; color: #666666;")
         main.addWidget(self.user_label)
 
-        # grid of cards
-        from PyQt5.QtWidgets import QGridLayout
+        # ----- Overview (donut progress) -----
+        overview_title = QLabel("Overview")
+        overview_title.setStyleSheet("font-size: 18px; font-weight: 600; margin-top: 8px;")
+        main.addWidget(overview_title)
+
+        stats_row = QHBoxLayout()
+
+        # Tasks card
+        self.todo_circle = CircularProgress(size=110, color="#f29ac5", bg="#f0d1e3")
+        todo_card = QWidget()
+        todo_card.setObjectName("card")
+        todo_card.setStyleSheet(CARD_STYLE)
+        todo_layout = QVBoxLayout()
+        todo_layout.setContentsMargins(10, 10, 10, 10)
+        todo_layout.setAlignment(Qt.AlignCenter)
+        todo_card.setLayout(todo_layout)
+        todo_layout.addWidget(self.todo_circle, alignment=Qt.AlignCenter)
+
+        todo_title = QLabel("Tasks Done")
+        todo_title.setAlignment(Qt.AlignCenter)
+        todo_title.setStyleSheet("font-weight: 600;")
+        todo_layout.addWidget(todo_title)
+
+        self.todo_label = QLabel("0 / 0")
+        self.todo_label.setAlignment(Qt.AlignCenter)
+        todo_layout.addWidget(self.todo_label)
+
+        # Flashcards card
+        self.flash_circle = CircularProgress(size=110, color="#86a9ff", bg="#c7d6ff")
+        flash_card = QWidget()
+        flash_card.setObjectName("card")
+        flash_card.setStyleSheet(CARD_STYLE)
+        flash_layout = QVBoxLayout()
+        flash_layout.setContentsMargins(10, 10, 10, 10)
+        flash_layout.setAlignment(Qt.AlignCenter)
+        flash_card.setLayout(flash_layout)
+        flash_layout.addWidget(self.flash_circle, alignment=Qt.AlignCenter)
+
+        flash_title = QLabel("Flashcards Known")
+        flash_title.setAlignment(Qt.AlignCenter)
+        flash_title.setStyleSheet("font-weight: 600;")
+        flash_layout.addWidget(flash_title)
+
+        self.flash_label = QLabel("0 / 0")
+        self.flash_label.setAlignment(Qt.AlignCenter)
+        flash_layout.addWidget(self.flash_label)
+
+        # Notes card
+        self.notes_circle = CircularProgress(size=110, color="#8ed9a5", bg="#bfe6c9")
+        notes_card = QWidget()
+        notes_card.setObjectName("card")
+        notes_card.setStyleSheet(CARD_STYLE)
+        notes_layout = QVBoxLayout()
+        notes_layout.setContentsMargins(10, 10, 10, 10)
+        notes_layout.setAlignment(Qt.AlignCenter)
+        notes_card.setLayout(notes_layout)
+        notes_layout.addWidget(self.notes_circle, alignment=Qt.AlignCenter)
+
+        notes_title = QLabel("Notes Filled")
+        notes_title.setAlignment(Qt.AlignCenter)
+        notes_title.setStyleSheet("font-weight: 600;")
+        notes_layout.addWidget(notes_title)
+
+        self.notes_label = QLabel("0 / 0 folders")
+        self.notes_label.setAlignment(Qt.AlignCenter)
+        notes_layout.addWidget(self.notes_label)
+
+        stats_row.addWidget(todo_card)
+        stats_row.addWidget(flash_card)
+        stats_row.addWidget(notes_card)
+
+        main.addLayout(stats_row)
+
+        # ----- Tools -----
+        tools_title = QLabel("Your Tools")
+        tools_title.setStyleSheet("font-size: 18px; font-weight: 600; margin-top: 12px;")
+        main.addWidget(tools_title)
+
         grid = QGridLayout()
         grid.setSpacing(20)
 
@@ -204,7 +358,6 @@ class DashboardPage(QWidget):
             ("Resources", "resources"),
             ("Schedule", "schedule"),
             ("Focus Timer", "timer"),
-            ("Clipart Generator", "clipart"),
         ]
 
         icon = make_open_window_icon()
@@ -214,6 +367,7 @@ class DashboardPage(QWidget):
             col = i % 3
 
             card = QWidget()
+            card.setObjectName("card")
             card.setStyleSheet(CARD_STYLE)
             v = QVBoxLayout()
             v.setContentsMargins(10, 10, 10, 10)
@@ -235,15 +389,61 @@ class DashboardPage(QWidget):
             grid.addWidget(card, row, col)
 
         main.addLayout(grid)
+        main.addStretch(1)
         self.setLayout(main)
+
         self.refresh()
 
     def refresh(self):
+        # user label
         user = self.get_user()
         if user:
             self.user_label.setText("Logged in as: " + user)
         else:
             self.user_label.setText("Not logged in")
+
+        # To-do progress
+        todos = load_json("todos.json", [])
+        total = len(todos)
+        done = sum(1 for t in todos if t.get("done"))
+
+        percent = int((done / total) * 100) if total else 0
+        self.todo_circle.setValueAnimated(percent)
+        self.todo_label.setText(f"{done} / {total} tasks")
+
+        # Flashcards progress
+        cards = load_json("flashcards.json", [])
+        total_cards = len(cards)
+        known_cards = sum(1 for c in cards if c.get("known"))
+
+        percent_fc = int((known_cards / total_cards) * 100) if total_cards else 0
+        self.flash_circle.setValueAnimated(percent_fc)
+        self.flash_label.setText(f"{known_cards} / {total_cards} cards")
+
+        # Notes progress: count folders that have non-empty content
+        notes_data = load_json("notes.json", {"folders": {}})
+        folders = {}
+        if isinstance(notes_data, dict):
+            if "folders" in notes_data and isinstance(notes_data["folders"], dict):
+                folders = notes_data["folders"]
+            elif "content" in notes_data:
+                # old style single content
+                folders = {"Notes": {"content": notes_data.get("content", "")}}
+
+        total_folders = len(folders)
+        filled_folders = 0
+        for info in folders.values():
+            content = ""
+            if isinstance(info, dict):
+                content = info.get("content", "")
+            elif isinstance(info, str):
+                content = info
+            if str(content).strip():
+                filled_folders += 1
+
+        percent_notes = int((filled_folders / total_folders) * 100) if total_folders else 0
+        self.notes_circle.setValueAnimated(percent_notes)
+        self.notes_label.setText(f"{filled_folders} / {total_folders} folders")
 
 
 # ================= TODO PAGE (priority + done/pending) =================
@@ -325,7 +525,7 @@ class TodoPage(BasePage):
         for item in self.data:
             if filt != "All" and item.get("priority") != filt:
                 continue
-            label = "[{0}] {1}".format(item.get("priority", "Low"), item.get("text", ""))
+            label = f"[{item.get('priority', 'Low')}] {item.get('text', '')}"
             lw = QListWidgetItem(label)
             if item.get("done"):
                 self.done_list.addItem(lw)
@@ -346,7 +546,7 @@ class TodoPage(BasePage):
     def _find_item_index(self, text, done_flag):
         for i, item in enumerate(self.data):
             if item.get("done") == done_flag:
-                label = "[{0}] {1}".format(item.get("priority", "Low"), item.get("text", ""))
+                label = f"[{item.get('priority', 'Low')}] {item.get('text', '')}"
                 if label == text:
                     return i
         return None
@@ -488,14 +688,22 @@ class NotesPage(BasePage):
         QMessageBox.information(self, "Saved", "Notes saved.")
 
 
-# ================= FLASHCARDS (with delete) =================
+# ================= FLASHCARDS (animated, known tracking) =================
 
 class FlashcardsPage(BasePage):
     FNAME = "flashcards.json"
 
     def __init__(self, goto_page, standalone=False):
         super().__init__(goto_page, standalone)
-        self.cards = load_json(self.FNAME, [])  # list of {front,back}
+        self.cards = load_json(self.FNAME, [])
+        changed = False
+        for c in self.cards:
+            if "known" not in c:
+                c["known"] = False
+                changed = True
+        if changed:
+            save_json(self.FNAME, self.cards)
+
         self.index = 0
         self.show_front = True
 
@@ -512,20 +720,34 @@ class FlashcardsPage(BasePage):
         self.card_label.setAlignment(Qt.AlignCenter)
         self.card_label.setWordWrap(True)
         self.card_label.setMinimumHeight(150)
+        self.card_label.setObjectName("Flashcard")
         self.card_label.setStyleSheet(CARD_STYLE + "font-size: 18px;")
         layout.addWidget(self.card_label)
+
+        # opacity effect for animation
+        self.effect = QGraphicsOpacityEffect()
+        self.card_label.setGraphicsEffect(self.effect)
+        self.anim = QPropertyAnimation(self.effect, b"opacity")
+        self.anim.setDuration(200)
+
+        self.counter_label = QLabel("")
+        self.counter_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.counter_label)
 
         btn_row = QHBoxLayout()
         flip_btn = QPushButton("Flip")
         next_btn = QPushButton("Next")
-        delete_btn = QPushButton("Delete card")
-        for b in (flip_btn, next_btn, delete_btn):
+        known_btn = QPushButton("Mark Known")
+        delete_btn = QPushButton("Delete")
+        for b in (flip_btn, next_btn, known_btn, delete_btn):
             b.setStyleSheet(BUTTON_STYLE)
         flip_btn.clicked.connect(self.flip)
         next_btn.clicked.connect(self.next_card)
+        known_btn.clicked.connect(self.mark_known)
         delete_btn.clicked.connect(self.delete_current)
         btn_row.addWidget(flip_btn)
         btn_row.addWidget(next_btn)
+        btn_row.addWidget(known_btn)
         btn_row.addWidget(delete_btn)
         layout.addLayout(btn_row)
 
@@ -545,16 +767,32 @@ class FlashcardsPage(BasePage):
         self.setLayout(layout)
         self.refresh()
 
+    def _play_flip_anim(self):
+        self.anim.stop()
+        self.effect.setOpacity(0.0)
+        self.anim.setStartValue(0.0)
+        self.anim.setEndValue(1.0)
+        self.anim.start()
+
     def refresh(self):
         self.cards = load_json(self.FNAME, [])
+        for c in self.cards:
+            if "known" not in c:
+                c["known"] = False
+        save_json(self.FNAME, self.cards)
+
         if not self.cards:
             self.card_label.setText("No cards yet. Add one below.")
+            self.counter_label.setText("")
             self.index = 0
             self.show_front = True
             return
+
         self.index %= len(self.cards)
         self.show_front = True
         self.card_label.setText(self.cards[self.index].get("front", ""))
+        self.counter_label.setText(f"Card {self.index+1} / {len(self.cards)}")
+        self._play_flip_anim()
 
     def flip(self):
         if not self.cards:
@@ -562,6 +800,7 @@ class FlashcardsPage(BasePage):
         self.show_front = not self.show_front
         side = "front" if self.show_front else "back"
         self.card_label.setText(self.cards[self.index].get(side, ""))
+        self._play_flip_anim()
 
     def next_card(self):
         if not self.cards:
@@ -569,6 +808,8 @@ class FlashcardsPage(BasePage):
         self.index = (self.index + 1) % len(self.cards)
         self.show_front = True
         self.card_label.setText(self.cards[self.index].get("front", ""))
+        self.counter_label.setText(f"Card {self.index+1} / {len(self.cards)}")
+        self._play_flip_anim()
 
     def add_card(self):
         front = self.front_input.text().strip()
@@ -576,7 +817,7 @@ class FlashcardsPage(BasePage):
         if not front or not back:
             QMessageBox.information(self, "Missing", "Please fill in both front and back.")
             return
-        self.cards.append({"front": front, "back": back})
+        self.cards.append({"front": front, "back": back, "known": False})
         save_json(self.FNAME, self.cards)
         self.front_input.clear()
         self.back_input.clear()
@@ -589,6 +830,13 @@ class FlashcardsPage(BasePage):
         del self.cards[self.index]
         save_json(self.FNAME, self.cards)
         self.refresh()
+
+    def mark_known(self):
+        if not self.cards:
+            return
+        self.cards[self.index]["known"] = True
+        save_json(self.FNAME, self.cards)
+        self.next_card()
 
 
 # ================= RESOURCES =================
@@ -646,14 +894,19 @@ class ResourcesPage(BasePage):
         QDesktopServices.openUrl(QUrl(item.text()))
 
 
-# ================= SCHEDULE =================
+# ================= SCHEDULE (calendar-based) =================
 
 class SchedulePage(BasePage):
     FNAME = "schedule.json"
 
     def __init__(self, goto_page, standalone=False):
         super().__init__(goto_page, standalone)
-        self.data = load_json(self.FNAME, [])
+        raw = load_json(self.FNAME, {})
+        # Backward compatibility: old list -> store under "__all__"
+        if isinstance(raw, list):
+            self.data = {"__all__": raw}
+        else:
+            self.data = raw
 
         layout = QVBoxLayout()
         layout.setAlignment(Qt.AlignTop)
@@ -664,12 +917,19 @@ class SchedulePage(BasePage):
         title.setStyleSheet(TITLE_STYLE)
         layout.addWidget(title)
 
+        self.calendar = QCalendarWidget()
+        self.calendar.selectionChanged.connect(self.refresh_for_selected_date)
+        layout.addWidget(self.calendar)
+
+        self.entries_label = QLabel("")
+        layout.addWidget(self.entries_label)
+
         self.listw = QListWidget()
         layout.addWidget(self.listw)
 
         row = QHBoxLayout()
         self.input = QLineEdit()
-        self.input.setPlaceholderText("Add entry (e.g. Mon 10–11: Math)…")
+        self.input.setPlaceholderText("Add entry for selected date…")
         add_btn = QPushButton("Add")
         add_btn.setStyleSheet(BUTTON_STYLE)
         add_btn.clicked.connect(self.add_entry)
@@ -678,65 +938,40 @@ class SchedulePage(BasePage):
         layout.addLayout(row)
 
         self.setLayout(layout)
-        self.refresh()
+        self.refresh_for_selected_date()
 
-    def refresh(self):
-        self.data = load_json(self.FNAME, [])
+    def _date_key(self):
+        d = self.calendar.selectedDate()
+        return d.toString("yyyy-MM-dd")
+
+    def refresh_for_selected_date(self):
         self.listw.clear()
-        for e in self.data:
+        key = self._date_key()
+        entries = self.data.get(key, [])
+        self.entries_label.setText(f"Entries for {key}:")
+        for e in entries:
             self.listw.addItem(e)
+
+        # show legacy entries if any (pre-calendar data)
+        legacy = self.data.get("__all__")
+        if legacy:
+            self.listw.addItem("---- Legacy entries ----")
+            for e in legacy:
+                self.listw.addItem(e)
 
     def add_entry(self):
         txt = self.input.text().strip()
         if not txt:
             QMessageBox.information(self, "Empty entry", "Write something before adding.")
             return
-        self.data.append(txt)
+        key = self._date_key()
+        self.data.setdefault(key, []).append(txt)
         save_json(self.FNAME, self.data)
         self.input.clear()
-        self.refresh()
+        self.refresh_for_selected_date()
 
 
-# ================= CLIPART PAGE =================
-
-class ClipartPage(BasePage):
-    def __init__(self, goto_page, standalone=False):
-        super().__init__(goto_page, standalone)
-
-        layout = QVBoxLayout()
-        layout.setAlignment(Qt.AlignTop)
-        self.add_back(layout)
-
-        title = QLabel("Clipart Generator")
-        title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet(TITLE_STYLE)
-        layout.addWidget(title)
-
-        desc = QLabel(
-            "Upload any image and we'll open a vector/clipart website\n"
-            "so you can turn it into aesthetic stickers."
-        )
-        desc.setAlignment(Qt.AlignCenter)
-        desc.setStyleSheet(TEXT_STYLE)
-        layout.addWidget(desc)
-
-        upload_btn = QPushButton("Upload image")
-        upload_btn.setStyleSheet(BUTTON_STYLE)
-        upload_btn.setMinimumHeight(48)
-        upload_btn.clicked.connect(self.pick_file)
-        layout.addWidget(upload_btn, alignment=Qt.AlignCenter)
-
-        self.setLayout(layout)
-
-    def pick_file(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Select image", "", "Images (*.png *.jpg *.jpeg *.webp);;All Files (*)"
-        )
-        if path:
-            QDesktopServices.openUrl(QUrl("https://vectorizer.ai"))
-
-
-# ================= TIMER (BIG NUMBERS) =================
+# ================= TIMER (animated flip-style) =================
 
 class TimerPage(BasePage):
     def __init__(self, goto_page, standalone=False):
@@ -758,16 +993,23 @@ class TimerPage(BasePage):
 
         self.time_label = QLabel("")
         self.time_label.setAlignment(Qt.AlignCenter)
+        self.time_label.setObjectName("BigNumber")
         self.time_label.setStyleSheet("""
-            font-size: 96px;
+            font-size: 72px;
             font-weight: 600;
             padding: 24px 32px;
             border-radius: 22px;
             background-color: rgba(0, 0, 0, 0.06);
             letter-spacing: 6px;
         """)
-        self.time_label.setMinimumHeight(220)
+        self.time_label.setMinimumHeight(180)
         layout.addWidget(self.time_label)
+
+        # opacity effect for flip-ish animation
+        self.time_effect = QGraphicsOpacityEffect()
+        self.time_label.setGraphicsEffect(self.time_effect)
+        self.time_anim = QPropertyAnimation(self.time_effect, b"opacity")
+        self.time_anim.setDuration(180)
 
         self.minutes_input = QLineEdit()
         self.minutes_input.setPlaceholderText("Minutes (default 25)")
@@ -790,6 +1032,13 @@ class TimerPage(BasePage):
         self.setLayout(layout)
         self.update_label()
 
+    def _play_tick_anim(self):
+        self.time_anim.stop()
+        self.time_effect.setOpacity(0.3)
+        self.time_anim.setStartValue(0.3)
+        self.time_anim.setEndValue(1.0)
+        self.time_anim.start()
+
     def start_timer(self):
         if self.running:
             return
@@ -804,6 +1053,7 @@ class TimerPage(BasePage):
         self.running = True
         self.timer.start(1000)
         self.update_label()
+        self._play_tick_anim()
 
     def stop_timer(self):
         self.running = False
@@ -822,8 +1072,9 @@ class TimerPage(BasePage):
             return
         self.time_left -= 1
         self.update_label()
+        self._play_tick_anim()
 
     def update_label(self):
         mins = self.time_left // 60
         secs = self.time_left % 60
-        self.time_label.setText("{:02d}:{:02d}".format(mins, secs))
+        self.time_label.setText(f"{mins:02d}:{secs:02d}")
