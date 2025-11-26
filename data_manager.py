@@ -1,3 +1,4 @@
+# data_manager.py
 import os
 import json
 
@@ -7,7 +8,9 @@ os.makedirs(DATA_DIR, exist_ok=True)
 
 
 def _file_path(name):
-    """Build an absolute path inside the data/ folder."""
+    """
+    Build an absolute path inside the data/ folder.
+    """
     return os.path.join(DATA_DIR, name)
 
 
@@ -119,14 +122,35 @@ def ensure_all_defaults():
     # Flashcards: list of {"front", "back", "known"}
     load_json("flashcards.json", [])
 
-    # Notes: { "folders": { "Subject": {"content": "..."} } }
+    # Notes:
+    # {
+    #   "folders": {
+    #     "Subject": {
+    #       "complete": false,
+    #       "units": {
+    #         "Unit 1": {"content": "..." },
+    #         ...
+    #       }
+    #     }
+    #   }
+    # }
     load_json("notes.json", {"folders": {}})
 
-    # Resources: simple list of URLs
-    load_json("resources.json", [])
+    # Resources:
+    # {
+    #   "subjects": {
+    #     "Subject": {
+    #       "units": {
+    #         "Unit 1": ["link1", "link2"]
+    #       }
+    #     }
+    #   }
+    # }
+    load_json("resources.json", {"subjects": {}})
 
     # Schedule: {"yyyy-MM-dd": ["entry1", "entry2"], "__all__": [...] (legacy)}
     load_json("schedule.json", {})
 
+    # Ensure users/settings exist
     load_users()
     load_settings()

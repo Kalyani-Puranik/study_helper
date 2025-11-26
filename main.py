@@ -5,7 +5,6 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QStackedWidget, QComboBox
 )
-    # QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QStackedWidget, QComboBox
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFontDatabase, QPixmap, QPainter, QColor, QIcon
 
@@ -31,7 +30,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        # Make sure data folder and JSONs exist
+        # Make sure data files exist
         ensure_all_defaults()
 
         self.setWindowTitle("Student Helper")
@@ -68,11 +67,17 @@ class MainWindow(QMainWindow):
 
         top_bar.addStretch()
 
+        # theme combo with ONLY coloured circles (no text)
         self.theme_combo = QComboBox()
-        self.theme_combo.setFixedWidth(140)
+        self.theme_combo.setFixedWidth(90)
         self.populate_theme_combo()
-        self.theme_combo.setCurrentText(self.theme_name)
-        self.theme_combo.currentTextChanged.connect(self.change_theme)
+        # set current index by theme name
+        try:
+            idx = THEME_NAMES.index(self.theme_name)
+        except ValueError:
+            idx = 0
+        self.theme_combo.setCurrentIndex(idx)
+        self.theme_combo.currentIndexChanged.connect(self.change_theme)
         top_bar.addWidget(self.theme_combo)
 
         self.dark_btn = QPushButton("☾" if not self.dark_mode else "☀")
@@ -126,12 +131,8 @@ class MainWindow(QMainWindow):
         self.add_page("login", LoginPage(self.switch_to, self.set_current_user))
         self.add_page(
             "dashboard",
-            DashboardPage(
-                self.switch_to,
-                self.open_in_new_window,
-                self.get_current_user,
-                self.logout,
-            ),
+            DashboardPage(self.switch_to, self.open_in_new_window,
+                          self.get_current_user, self.logout),
         )
         self.add_page("todo", TodoPage(self.switch_to))
         self.add_page("notes", NotesPage(self.switch_to))
@@ -146,7 +147,6 @@ class MainWindow(QMainWindow):
         else:
             self.switch_to("login")
 
-        # apply theme
         self.apply_theme()
 
     # ---------- fonts & themes ----------
@@ -181,17 +181,21 @@ class MainWindow(QMainWindow):
 
             p.end()
             icon = QIcon(pix)
-            self.theme_combo.addItem(icon, name)
+
+            # add ONLY icon (no visible text)
+            self.theme_combo.addItem(icon, "")
 
     def apply_theme(self):
         sheet = build_stylesheet(self.theme_name, self.dark_mode, self.font_name)
         self.setStyleSheet(sheet)
         self.dark_btn.setText("☾" if not self.dark_mode else "☀")
 
-    def change_theme(self, name):
-        self.theme_name = name
-        self.apply_theme()
-        self.save_settings()
+    def change_theme(self, index: int):
+        # index corresponds to THEME_NAMES
+        if 0 <= index < len(THEME_NAMES):
+            self.theme_name = THEME_NAMES[index]
+            self.apply_theme()
+            self.save_settings()
 
     def toggle_dark(self):
         self.dark_mode = not self.dark_mode
@@ -245,12 +249,12 @@ class MainWindow(QMainWindow):
 
     def open_in_new_window(self, key):
         cls_map = {
-            "todo": TodoPage,
-            "notes": NotesPage,
+            "todo":      TodoPage,
+            "notes":     NotesPage,
             "flashcards": FlashcardsPage,
             "resources": ResourcesPage,
-            "schedule": SchedulePage,
-            "timer": TimerPage,
+            "schedule":  SchedulePage,
+            "timer":     TimerPage,
         }
         if key not in cls_map:
             return
