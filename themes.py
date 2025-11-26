@@ -1,210 +1,204 @@
-# themes.py
-from PyQt5.QtGui import QColor
+# Pastel + dark themes, with button colors included.
 
-# -----------------------------------------------------
-# Available theme names (shown in dropdown)
-# -----------------------------------------------------
-THEME_NAMES = [
-    "Pink",
-    "Purple",
-    "Green",
-    "Blue",
-    "Yellow",
-    "Mono"
-]
+BASE_WIDGETS = """
+QMainWindow {{
+    background-color: {bg};
+}}
 
-# -----------------------------------------------------
-# Light theme definitions
-# -----------------------------------------------------
+QWidget {{
+    background-color: {bg};
+    color: {fg};
+    font-family: "{font}";
+    font-size: 14px;
+}}
+
+QPushButton {{
+    background-color: {button_bg};
+    color: {button_fg};
+    border-radius: 14px;
+    padding: 7px 16px;
+    border: none;
+}}
+QPushButton:hover {{
+    background-color: {button_bg_hover};
+}}
+
+QLineEdit, QTextEdit, QComboBox {{
+    background-color: {card_bg};
+    color: {fg};
+    border-radius: 10px;
+    border: 1px solid {border};
+    padding: 6px 10px;
+}}
+
+QListWidget {{
+    background-color: {card_bg};
+    color: {fg};
+    border-radius: 10px;
+    border: 1px solid {border};
+}}
+
+QLabel {{
+    color: {fg};
+}}
+
+QProgressBar {{
+    border-radius: 100px;
+    height: 14px;
+    background-color: {card_bg};
+}}
+QProgressBar::chunk {{
+    border-radius: 100px;
+    background-color: {accent};
+}}
+"""
+
 LIGHT_THEMES = {
-    "Pink": {
-        "bg": "#fff7fb",
-        "card_bg": "#ffe2f1",
-        "button_bg": "#ff9dcf",
-        "button_hover": "#ff82c3",
-        "text": "#333333",
-        "sidebar": "#ffd3ea",
-        "accent": "#ff91cb"
-    },
-    "Purple": {
-        "bg": "#f8f4ff",
-        "card_bg": "#eaddff",
-        "button_bg": "#c6a4ff",
-        "button_hover": "#b58cff",
-        "text": "#2e2e2e",
-        "sidebar": "#e8d6ff",
-        "accent": "#bb96ff"
-    },
-    "Green": {
-        "bg": "#f2fff8",
-        "card_bg": "#d7ffe6",
-        "button_bg": "#89e6b8",
-        "button_hover": "#6edba8",
-        "text": "#2a2a2a",
-        "sidebar": "#caffe0",
-        "accent": "#7de1b0"
-    },
-    "Blue": {
-        "bg": "#f4faff",
-        "card_bg": "#d6ecff",
-        "button_bg": "#8dc6ff",
-        "button_hover": "#75b8ff",
-        "text": "#2c2c2c",
-        "sidebar": "#cbe5ff",
-        "accent": "#7abaff"
-    },
-    "Yellow": {
-        "bg": "#fffdf3",
-        "card_bg": "#fff1c1",
-        "button_bg": "#ffd86d",
-        "button_hover": "#ffcb44",
-        "text": "#3a3a3a",
-        "sidebar": "#ffe8a1",
-        "accent": "#ffcd55"
-    },
-    "Mono": {
-        "bg": "#f4f4f4",
-        "card_bg": "#e8e8e8",
-        "button_bg": "#bcbcbc",
-        "button_hover": "#a0a0a0",
-        "text": "#000000",
-        "sidebar": "#dcdcdc",
-        "accent": "#b8b8b8"
-    }
+    "Pink": dict(
+        bg="#fff8fb",
+        card_bg="#ffffff",
+        border="#f0d1e3",
+        fg="#2f2233",
+        accent="#f7b7d7",
+        accent_hover="#f29ac5",
+        button_bg="#f7b7d7",
+        button_bg_hover="#f29ac5",
+        button_fg="#2f2233",
+    ),
+    "Purple": dict(
+        bg="#f6f2ff",
+        card_bg="#ffffff",
+        border="#d7c9ff",
+        fg="#241c3a",
+        accent="#c3b0ff",
+        accent_hover="#af98ff",
+        button_bg="#c3b0ff",
+        button_bg_hover="#af98ff",
+        button_fg="#241c3a",
+    ),
+    "Green": dict(
+        bg="#f3fff7",
+        card_bg="#ffffff",
+        border="#bfe6c9",
+        fg="#1f3a29",
+        accent="#8ed9a5",
+        accent_hover="#71c38e",
+        button_bg="#8ed9a5",
+        button_bg_hover="#71c38e",
+        button_fg="#1f3a29",
+    ),
+    "Yellow": dict(
+        bg="#fffdf1",
+        card_bg="#ffffff",
+        border="#f6e0a8",
+        fg="#4a3c16",
+        accent="#ffd978",
+        accent_hover="#ffc74a",
+        button_bg="#ffd978",
+        button_bg_hover="#ffc74a",
+        button_fg="#4a3c16",
+    ),
+    "Blue": dict(
+        bg="#f4f7ff",
+        card_bg="#ffffff",
+        border="#c7d6ff",
+        fg="#1f2739",
+        accent="#a2bfff",
+        accent_hover="#86a9ff",
+        button_bg="#a2bfff",
+        button_bg_hover="#86a9ff",
+        button_fg="#1f2739",
+    ),
+    "Mono": dict(
+        bg="#f7f7f7",
+        card_bg="#ffffff",
+        border="#d5d5d5",
+        fg="#222222",
+        accent="#c4c4c4",
+        accent_hover="#aaaaaa",
+        button_bg="#c4c4c4",
+        button_bg_hover="#aaaaaa",
+        button_fg="#222222",
+    ),
 }
 
-# -----------------------------------------------------
-# DARK THEMES — deeper, moodier tones
-# -----------------------------------------------------
 DARK_THEMES = {
-    name: {
-        "bg": QColor(theme["bg"]).darker(240).name(),
-        "card_bg": QColor(theme["card_bg"]).darker(260).name(),
-        "button_bg": QColor(theme["button_bg"]).darker(200).name(),
-        "button_hover": QColor(theme["button_hover"]).darker(180).name(),
-        "text": "#f7f7f7",
-        "sidebar": QColor(theme["sidebar"]).darker(270).name(),
-        "accent": QColor(theme["accent"]).darker(200).name()
-    }
-    for name, theme in LIGHT_THEMES.items()
+    "Pink": dict(
+        bg="#251623",
+        card_bg="#321f30",
+        border="#6f4661",
+        fg="#f7e9f3",
+        accent="#f29ac5",
+        accent_hover="#ff7eb6",
+        button_bg="#f29ac5",
+        button_bg_hover="#ff7eb6",
+        button_fg="#241222",
+    ),
+    "Purple": dict(
+        bg="#1f182e",
+        card_bg="#2a2142",
+        border="#5c4d83",
+        fg="#ebe4ff",
+        accent="#b8a5ff",
+        accent_hover="#a38fff",
+        button_bg="#b8a5ff",
+        button_bg_hover="#a38fff",
+        button_fg="#1b1526",
+    ),
+    "Green": dict(
+        bg="#102019",
+        card_bg="#172f23",
+        border="#3c6e50",
+        fg="#e6f7ec",
+        accent="#73c995",
+        accent_hover="#5cb984",
+        button_bg="#73c995",
+        button_bg_hover="#5cb984",
+        button_fg="#0e1914",
+    ),
+    "Yellow": dict(
+        bg="#272015",
+        card_bg="#342a18",
+        border="#7c6231",
+        fg="#fff3cf",
+        accent="#ffcd6f",
+        accent_hover="#ffb63a",
+        button_bg="#ffcd6f",
+        button_bg_hover="#ffb63a",
+        button_fg="#231c11",
+    ),
+    "Blue": dict(
+        bg="#101623",
+        card_bg="#182134",
+        border="#3a4b74",
+        fg="#e2ebff",
+        accent="#92adff",
+        accent_hover="#7393ff",
+        button_bg="#92adff",
+        button_bg_hover="#7393ff",
+        button_fg="#0e1520",
+    ),
+    "Mono": dict(
+        bg="#171717",
+        card_bg="#232323",
+        border="#3f3f3f",
+        fg="#f1f1f1",
+        accent="#7f7f7f",
+        accent_hover="#999999",
+        button_bg="#7f7f7f",
+        button_bg_hover="#999999",
+        button_fg="#151515",
+    ),
 }
 
-
-# -----------------------------------------------------
-# Helper to build full stylesheet
-# -----------------------------------------------------
-def build_stylesheet(theme_name: str, dark: bool, font=None) -> str:
-    theme_source = DARK_THEMES if dark else LIGHT_THEMES
-    t = theme_source.get(theme_name, LIGHT_THEMES["Pink"])
-
-    font_family = font or "Avenir"
-
-    return f"""
-    QWidget {{
-        background-color: {t['bg']};
-        color: {t['text']};
-        font-family: '{font_family}';
-        font-size: 15px;
-    }}
-
-    /* Cards */
-    QFrame#card, QWidget#card {{
-        background-color: {t['card_bg']};
-        border-radius: 18px;
-    }}
-
-    /* Buttons */
-    QPushButton {{
-        background-color: {t['button_bg']};
-        color: {t['text']};
-        border-radius: 10px;
-        padding: 8px 14px;
-        font-size: 14px;
-        border: none;
-    }}
-    QPushButton:hover {{
-        background-color: {t['button_hover']};
-    }}
-
-    /* Inputs */
-    QLineEdit, QTextEdit {{
-        background-color: {t['card_bg']};
-        border-radius: 10px;
-        border: 1px solid {t['accent']};
-        padding: 6px 10px;
-        font-size: 14px;
-    }}
-
-    /* Lists */
-    QListWidget {{
-        background-color: {t['card_bg']};
-        border-radius: 10px;
-        border: 1px solid {t['accent']};
-        padding: 6px;
-    }}
-
-    /* Sidebar */
-    #sidebar {{
-        background-color: {t['sidebar']};
-        border-right: 2px solid {t['accent']};
-    }}
-    #sidebar QPushButton {{
-        background-color: transparent;
-        border-radius: 0;
-        padding: 12px;
-        text-align: left;
-        font-size: 15px;
-    }}
-    #sidebar QPushButton:hover {{
-        background-color: {t['button_bg']};
-    }}
-
-    /* Top bar */
-    #topbar QLabel {{
-        font-size: 18px;
-        font-weight: 600;
-    }}
-
-    QComboBox {{
-        background-color: {t['button_bg']};
-        padding: 4px 8px;
-        border-radius: 8px;
-    }}
-
-    QComboBox:hover {{
-        background-color: {t['button_hover']};
-    }}
-
-    /* Scrollbars */
-    QScrollBar:vertical {{
-        background: transparent;
-        width: 10px;
-    }}
-    QScrollBar::handle:vertical {{
-        background: {t['accent']};
-        border-radius: 5px;
-    }}
-
-    /* Special labels (timer, flashcards) */
-    QLabel#BigNumber {{
-        font-size: 42px;
-        font-weight: 600;
-    }}
-    QLabel#Flashcard {{
-        background-color: {t['card_bg']};
-        border-radius: 20px;
-        padding: 20px;
-        font-size: 22px;
-    }}
-    """
+THEME_NAMES = list(LIGHT_THEMES.keys())
+DEFAULT_FONT = "Avenir"
 
 
-# -----------------------------------------------------
-# All exported
-# -----------------------------------------------------
-__all__ = [
-    "build_stylesheet",
-    "THEME_NAMES",
-    "LIGHT_THEMES",
-    "DARK_THEMES"
-]
+def build_stylesheet(theme_name, dark, font=None):
+    base = DARK_THEMES if dark else LIGHT_THEMES
+    if theme_name not in base:
+        theme_name = "Pink"
+    t = base[theme_name].copy()
+    t["font"] = font or DEFAULT_FONT
+    return BASE_WIDGETS.format(**t)

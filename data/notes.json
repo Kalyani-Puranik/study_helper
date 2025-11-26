@@ -1,6 +1,8 @@
 {
     "folders": {
-        "General": [],
+        "General": {
+            "content": ""
+        },
         "Chemistry": {
             "content": ""
         }

@@ -1,23 +1,19 @@
-# pages.py
 from PyQt5.QtWidgets import (
     QWidget, QPushButton, QLabel, QVBoxLayout, QHBoxLayout,
     QLineEdit, QTextEdit, QListWidget, QListWidgetItem,
     QComboBox, QMessageBox, QCalendarWidget,
     QGraphicsOpacityEffect, QGridLayout
 )
-from PyQt5.QtCore import (
-    Qt, QUrl, QTimer, QPropertyAnimation,
-    pyqtProperty, QRectF
-)
+from PyQt5.QtCore import Qt, QUrl, QTimer, QPropertyAnimation, QDate
 from PyQt5.QtGui import (
     QDesktopServices, QIcon, QPixmap, QPainter,
-    QColor, QPen, QFont
+    QColor, QFont
 )
 
 from data_manager import (
     load_json, save_json,
     load_users, save_users,
-    load_settings, save_settings
+    load_settings
 )
 
 # ---------- SHARED STYLES (NO COLORS HERE; THEMES HANDLE COLORS) ----------
@@ -49,79 +45,12 @@ def make_open_window_icon(size=20):
     p.drawRoundedRect(3, 3, size - 6, size - 6, 3, 3)
 
     # plus sign
-    p.setPen(QColor(80, 80, 80))
     mid = size // 2
     p.drawLine(mid, 5, mid, size - 5)
     p.drawLine(5, mid, size - 5, mid)
 
     p.end()
     return QIcon(pix)
-
-
-# ---------------------------- CIRCULAR PROGRESS WIDGET ----------------------------
-
-class CircularProgress(QWidget):
-    """
-    Cute pastel circular progress (0–100%) with smooth animation.
-    """
-    def __init__(self, size=110, thickness=10, color="#f29ac5", bg="#e8d8e2"):
-        super().__init__()
-        self._value = 0
-        self.size = size
-        self.thickness = thickness
-        self.progress_color = QColor(color)
-        self.bg_color = QColor(bg)
-
-        self.setMinimumSize(size, size)
-
-        self.anim = QPropertyAnimation(self, b"value")
-        self.anim.setDuration(400)
-
-    def getValue(self):
-        return self._value
-
-    def setValue(self, v):
-        v = max(0, min(100, int(v)))
-        self._value = v
-        self.update()
-
-    value = pyqtProperty(int, fget=getValue, fset=setValue)
-
-    def setValueAnimated(self, v):
-        v = max(0, min(100, int(v)))
-        self.anim.stop()
-        self.anim.setStartValue(self._value)
-        self.anim.setEndValue(v)
-        self.anim.start()
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-
-        rect = QRectF(
-            self.thickness / 2,
-            self.thickness / 2,
-            self.size - self.thickness,
-            self.size - self.thickness,
-        )
-
-        # background circle
-        pen = QPen(self.bg_color, self.thickness)
-        pen.setCapStyle(Qt.RoundCap)
-        painter.setPen(pen)
-        painter.setBrush(Qt.NoBrush)
-        painter.drawEllipse(rect)
-
-        # progress arc
-        pen.setColor(self.progress_color)
-        painter.setPen(pen)
-        angle = int(360 * (self._value / 100))
-        painter.drawArc(rect, -90 * 16, -angle * 16)
-
-        # text inside (%)
-        painter.setPen(self.progress_color.darker(130))
-        painter.setFont(QFont("Avenir", 14, QFont.Bold))
-        painter.drawText(self.rect(), Qt.AlignCenter, f"{self._value}%")
 
 
 # ================= BASE PAGE =================
@@ -173,12 +102,18 @@ class LoginPage(QWidget):
         row = QHBoxLayout()
         login_btn = QPushButton("Log in")
         signup_btn = QPushButton("Sign up")
-        login_btn.setStyleSheet(BUTTON_STYLE)
-        signup_btn.setStyleSheet(BUTTON_STYLE)
+        delete_btn = QPushButton("Delete User")
+
+        for b in (login_btn, signup_btn, delete_btn):
+            b.setStyleSheet(BUTTON_STYLE)
+
         login_btn.clicked.connect(self.handle_login)
         signup_btn.clicked.connect(self.handle_signup)
+        delete_btn.clicked.connect(self.handle_delete)
+
         row.addWidget(login_btn)
         row.addWidget(signup_btn)
+        row.addWidget(delete_btn)
         layout.addLayout(row)
 
         self.setLayout(layout)
@@ -226,6 +161,32 @@ class LoginPage(QWidget):
         QMessageBox.information(self, "Account created", "Your account has been created.")
         self.finish_login(username)
 
+    def handle_delete(self):
+        username, password = self._get_credentials()
+        if not username:
+            return
+        users = load_users()
+        if username not in users:
+            QMessageBox.warning(self, "User not found", "That user does not exist.")
+            return
+        if users[username] != password:
+            QMessageBox.warning(self, "Wrong password", "Password incorrect.")
+            return
+        confirm = QMessageBox.question(
+            self,
+            "Delete user",
+            f"Delete user '{username}' and their login?\n(Notes etc. stay in shared JSON.)",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if confirm == QMessageBox.Yes:
+            del users[username]
+            save_users(users)
+            settings = load_settings()
+            if settings.get("last_user") == username:
+                settings["last_user"] = ""
+                save_settings(settings)
+            QMessageBox.information(self, "Deleted", "User deleted.")
+
     def finish_login(self, username):
         settings = load_settings()
         settings["last_user"] = username
@@ -270,86 +231,49 @@ class DashboardPage(QWidget):
         self.user_label.setStyleSheet("margin-bottom: 10px; color: #666666;")
         main.addWidget(self.user_label)
 
-        # ----- Overview (donut progress) -----
+        # ----- Overview section with progress -----
         overview_title = QLabel("Overview")
         overview_title.setStyleSheet("font-size: 18px; font-weight: 600; margin-top: 8px;")
         main.addWidget(overview_title)
 
-        stats_row = QHBoxLayout()
+        overview_card = QWidget()
+        overview_card.setStyleSheet(CARD_STYLE)
+        o_layout = QVBoxLayout()
+        o_layout.setContentsMargins(12, 12, 12, 12)
+        overview_card.setLayout(o_layout)
 
-        # Tasks card
-        self.todo_circle = CircularProgress(size=110, color="#f29ac5", bg="#f0d1e3")
-        todo_card = QWidget()
-        todo_card.setObjectName("card")
-        todo_card.setStyleSheet(CARD_STYLE)
-        todo_layout = QVBoxLayout()
-        todo_layout.setContentsMargins(10, 10, 10, 10)
-        todo_layout.setAlignment(Qt.AlignCenter)
-        todo_card.setLayout(todo_layout)
-        todo_layout.addWidget(self.todo_circle, alignment=Qt.AlignCenter)
+        # To-do progress
+        todo_row = QHBoxLayout()
+        self.todo_label = QLabel("Tasks: 0 / 0 done")
+        from PyQt5.QtWidgets import QProgressBar
+        self.todo_bar = QProgressBar()
+        self.todo_bar.setMinimum(0)
+        self.todo_bar.setMaximum(1)
+        self.todo_bar.setValue(0)
+        todo_row.addWidget(self.todo_label)
+        todo_row.addWidget(self.todo_bar)
+        o_layout.addLayout(todo_row)
 
-        todo_title = QLabel("Tasks Done")
-        todo_title.setAlignment(Qt.AlignCenter)
-        todo_title.setStyleSheet("font-weight: 600;")
-        todo_layout.addWidget(todo_title)
+        # Flashcards progress
+        flash_row = QHBoxLayout()
+        self.flash_label = QLabel("Flashcards known: 0 / 0")
+        self.flash_bar = QProgressBar()
+        self.flash_bar.setMinimum(0)
+        self.flash_bar.setMaximum(1)
+        self.flash_bar.setValue(0)
+        flash_row.addWidget(self.flash_label)
+        flash_row.addWidget(self.flash_bar)
+        o_layout.addLayout(flash_row)
 
-        self.todo_label = QLabel("0 / 0")
-        self.todo_label.setAlignment(Qt.AlignCenter)
-        todo_layout.addWidget(self.todo_label)
+        main.addWidget(overview_card)
 
-        # Flashcards card
-        self.flash_circle = CircularProgress(size=110, color="#86a9ff", bg="#c7d6ff")
-        flash_card = QWidget()
-        flash_card.setObjectName("card")
-        flash_card.setStyleSheet(CARD_STYLE)
-        flash_layout = QVBoxLayout()
-        flash_layout.setContentsMargins(10, 10, 10, 10)
-        flash_layout.setAlignment(Qt.AlignCenter)
-        flash_card.setLayout(flash_layout)
-        flash_layout.addWidget(self.flash_circle, alignment=Qt.AlignCenter)
-
-        flash_title = QLabel("Flashcards Known")
-        flash_title.setAlignment(Qt.AlignCenter)
-        flash_title.setStyleSheet("font-weight: 600;")
-        flash_layout.addWidget(flash_title)
-
-        self.flash_label = QLabel("0 / 0")
-        self.flash_label.setAlignment(Qt.AlignCenter)
-        flash_layout.addWidget(self.flash_label)
-
-        # Notes card
-        self.notes_circle = CircularProgress(size=110, color="#8ed9a5", bg="#bfe6c9")
-        notes_card = QWidget()
-        notes_card.setObjectName("card")
-        notes_card.setStyleSheet(CARD_STYLE)
-        notes_layout = QVBoxLayout()
-        notes_layout.setContentsMargins(10, 10, 10, 10)
-        notes_layout.setAlignment(Qt.AlignCenter)
-        notes_card.setLayout(notes_layout)
-        notes_layout.addWidget(self.notes_circle, alignment=Qt.AlignCenter)
-
-        notes_title = QLabel("Notes Filled")
-        notes_title.setAlignment(Qt.AlignCenter)
-        notes_title.setStyleSheet("font-weight: 600;")
-        notes_layout.addWidget(notes_title)
-
-        self.notes_label = QLabel("0 / 0 folders")
-        self.notes_label.setAlignment(Qt.AlignCenter)
-        notes_layout.addWidget(self.notes_label)
-
-        stats_row.addWidget(todo_card)
-        stats_row.addWidget(flash_card)
-        stats_row.addWidget(notes_card)
-
-        main.addLayout(stats_row)
-
-        # ----- Tools -----
+        # ----- Tools section -----
         tools_title = QLabel("Your Tools")
         tools_title.setStyleSheet("font-size: 18px; font-weight: 600; margin-top: 12px;")
         main.addWidget(tools_title)
 
         grid = QGridLayout()
-        grid.setSpacing(20)
+        grid.setSpacing(16)
 
         tiles = [
             ("To-Do List", "todo"),
@@ -367,14 +291,13 @@ class DashboardPage(QWidget):
             col = i % 3
 
             card = QWidget()
-            card.setObjectName("card")
             card.setStyleSheet(CARD_STYLE)
             v = QVBoxLayout()
             v.setContentsMargins(10, 10, 10, 10)
             card.setLayout(v)
 
             main_btn = QPushButton(label)
-            main_btn.setStyleSheet(BUTTON_STYLE + "font-size: 17px;")
+            main_btn.setStyleSheet(BUTTON_STYLE + "font-size: 16px;")
             main_btn.clicked.connect(lambda _, p=key: self.goto_page(p))
             v.addWidget(main_btn)
 
@@ -406,44 +329,25 @@ class DashboardPage(QWidget):
         todos = load_json("todos.json", [])
         total = len(todos)
         done = sum(1 for t in todos if t.get("done"))
-
-        percent = int((done / total) * 100) if total else 0
-        self.todo_circle.setValueAnimated(percent)
-        self.todo_label.setText(f"{done} / {total} tasks")
+        if total == 0:
+            self.todo_bar.setMaximum(1)
+            self.todo_bar.setValue(0)
+        else:
+            self.todo_bar.setMaximum(total)
+            self.todo_bar.setValue(done)
+        self.todo_label.setText(f"Tasks: {done} / {total} done")
 
         # Flashcards progress
         cards = load_json("flashcards.json", [])
         total_cards = len(cards)
-        known_cards = sum(1 for c in cards if c.get("known"))
-
-        percent_fc = int((known_cards / total_cards) * 100) if total_cards else 0
-        self.flash_circle.setValueAnimated(percent_fc)
-        self.flash_label.setText(f"{known_cards} / {total_cards} cards")
-
-        # Notes progress: count folders that have non-empty content
-        notes_data = load_json("notes.json", {"folders": {}})
-        folders = {}
-        if isinstance(notes_data, dict):
-            if "folders" in notes_data and isinstance(notes_data["folders"], dict):
-                folders = notes_data["folders"]
-            elif "content" in notes_data:
-                # old style single content
-                folders = {"Notes": {"content": notes_data.get("content", "")}}
-
-        total_folders = len(folders)
-        filled_folders = 0
-        for info in folders.values():
-            content = ""
-            if isinstance(info, dict):
-                content = info.get("content", "")
-            elif isinstance(info, str):
-                content = info
-            if str(content).strip():
-                filled_folders += 1
-
-        percent_notes = int((filled_folders / total_folders) * 100) if total_folders else 0
-        self.notes_circle.setValueAnimated(percent_notes)
-        self.notes_label.setText(f"{filled_folders} / {total_folders} folders")
+        known_cards = sum(1 for c in cards if c.get("known", False))
+        if total_cards == 0:
+            self.flash_bar.setMaximum(1)
+            self.flash_bar.setValue(0)
+        else:
+            self.flash_bar.setMaximum(total_cards)
+            self.flash_bar.setValue(known_cards)
+        self.flash_label.setText(f"Flashcards known: {known_cards} / {total_cards}")
 
 
 # ================= TODO PAGE (priority + done/pending) =================
@@ -474,8 +378,12 @@ class TodoPage(BasePage):
         layout.addLayout(filter_row)
 
         lists_row = QHBoxLayout()
+
         self.pending_list = QListWidget()
+        self.pending_list.setStyleSheet("font-size: 13px;")
         self.done_list = QListWidget()
+        self.done_list.setStyleSheet("font-size: 13px; color: #888888;")
+
         lists_row.addWidget(self.pending_list)
         lists_row.addWidget(self.done_list)
         layout.addLayout(lists_row)
@@ -483,11 +391,14 @@ class TodoPage(BasePage):
         input_row = QHBoxLayout()
         self.task_input = QLineEdit()
         self.task_input.setPlaceholderText("New task…")
+
         self.priority_select = QComboBox()
         self.priority_select.addItems(["High", "Medium", "Low"])
+
         add_btn = QPushButton("Add")
         add_btn.setStyleSheet(BUTTON_STYLE)
         add_btn.clicked.connect(self.add_task)
+
         input_row.addWidget(self.task_input)
         input_row.addWidget(self.priority_select)
         input_row.addWidget(add_btn)
@@ -516,6 +427,20 @@ class TodoPage(BasePage):
     def _save_data(self):
         save_json(self.FNAME, self.data)
 
+    def _style_item(self, lw_item, priority, done):
+        # Priority color
+        if priority == "High":
+            color = "#ff6b6b"
+        elif priority == "Medium":
+            color = "#ffb347"
+        else:
+            color = "#6bd36b"
+
+        if done:
+            lw_item.setForeground(QColor("#888888"))
+        else:
+            lw_item.setForeground(QColor(color))
+
     def refresh(self):
         self._load_data()
         self.pending_list.clear()
@@ -527,7 +452,9 @@ class TodoPage(BasePage):
                 continue
             label = f"[{item.get('priority', 'Low')}] {item.get('text', '')}"
             lw = QListWidgetItem(label)
-            if item.get("done"):
+            done = item.get("done")
+            self._style_item(lw, item.get("priority", "Low"), done)
+            if done:
                 self.done_list.addItem(lw)
             else:
                 self.pending_list.addItem(lw)
@@ -587,14 +514,16 @@ class TodoPage(BasePage):
             self.refresh()
 
 
-# ================= NOTES PAGE (folders / subjects) =================
+# ================= NOTES PAGE (simple folders) =================
 
 class NotesPage(BasePage):
     FNAME = "notes.json"
 
     def __init__(self, goto_page, standalone=False):
         super().__init__(goto_page, standalone)
+
         self.data = load_json(self.FNAME, {"folders": {}})
+        self._normalize_data()
         self.current_folder = None
 
         layout = QVBoxLayout()
@@ -653,9 +582,43 @@ class NotesPage(BasePage):
         self.setLayout(layout)
         self.refresh_folders()
 
+    def _normalize_data(self):
+        """
+        Ensure notes.json is simple:
+        { "folders": { "Name": {"content": "..."} } }
+        If it has more complex structure, flatten it.
+        """
+        folders = self.data.get("folders", {})
+        new_folders = {}
+        changed = False
+
+        for name, val in folders.items():
+            if isinstance(val, dict):
+                if "content" in val:
+                    new_folders[name] = {"content": val.get("content", "")}
+                elif "units" in val:
+                    # flatten first unit
+                    units = val.get("units", {})
+                    if units:
+                        first_unit = next(iter(units.values()))
+                        new_folders[name] = {"content": first_unit.get("content", "")}
+                    else:
+                        new_folders[name] = {"content": ""}
+                else:
+                    new_folders[name] = {"content": ""}
+            elif isinstance(val, str):
+                new_folders[name] = {"content": val}
+            else:
+                new_folders[name] = {"content": ""}
+            changed = True
+
+        if changed:
+            self.data = {"folders": new_folders}
+            save_json(self.FNAME, self.data)
+
     def refresh_folders(self):
         self.folder_list.clear()
-        for name in sorted(self.data["folders"].keys()):
+        for name in sorted(self.data.get("folders", {}).keys()):
             self.folder_list.addItem(name)
 
     def add_folder(self):
@@ -663,10 +626,10 @@ class NotesPage(BasePage):
         if not name:
             QMessageBox.information(self, "No name", "Type a folder/subject name.")
             return
-        if name in self.data["folders"]:
+        if name in self.data.get("folders", {}):
             QMessageBox.information(self, "Exists", "That folder already exists.")
             return
-        self.data["folders"][name] = {"content": ""}
+        self.data.setdefault("folders", {})[name] = {"content": ""}
         save_json(self.FNAME, self.data)
         self.folder_input.clear()
         self.refresh_folders()
@@ -676,7 +639,7 @@ class NotesPage(BasePage):
             return
         self.current_folder = name
         self.folder_title.setText("Notes — " + name)
-        content = self.data["folders"].get(name, {}).get("content", "")
+        content = self.data.get("folders", {}).get(name, {}).get("content", "")
         self.text_edit.setPlainText(content)
 
     def save_notes(self):
@@ -720,7 +683,6 @@ class FlashcardsPage(BasePage):
         self.card_label.setAlignment(Qt.AlignCenter)
         self.card_label.setWordWrap(True)
         self.card_label.setMinimumHeight(150)
-        self.card_label.setObjectName("Flashcard")
         self.card_label.setStyleSheet(CARD_STYLE + "font-size: 18px;")
         layout.addWidget(self.card_label)
 
@@ -728,7 +690,7 @@ class FlashcardsPage(BasePage):
         self.effect = QGraphicsOpacityEffect()
         self.card_label.setGraphicsEffect(self.effect)
         self.anim = QPropertyAnimation(self.effect, b"opacity")
-        self.anim.setDuration(200)
+        self.anim.setDuration(180)
 
         self.counter_label = QLabel("")
         self.counter_label.setAlignment(Qt.AlignCenter)
@@ -776,10 +738,13 @@ class FlashcardsPage(BasePage):
 
     def refresh(self):
         self.cards = load_json(self.FNAME, [])
+        changed = False
         for c in self.cards:
             if "known" not in c:
                 c["known"] = False
-        save_json(self.FNAME, self.cards)
+                changed = True
+        if changed:
+            save_json(self.FNAME, self.cards)
 
         if not self.cards:
             self.card_label.setText("No cards yet. Add one below.")
@@ -839,7 +804,7 @@ class FlashcardsPage(BasePage):
         self.next_card()
 
 
-# ================= RESOURCES =================
+# ================= RESOURCES (simple list) =================
 
 class ResourcesPage(BasePage):
     FNAME = "resources.json"
@@ -902,7 +867,6 @@ class SchedulePage(BasePage):
     def __init__(self, goto_page, standalone=False):
         super().__init__(goto_page, standalone)
         raw = load_json(self.FNAME, {})
-        # Backward compatibility: old list -> store under "__all__"
         if isinstance(raw, list):
             self.data = {"__all__": raw}
         else:
@@ -952,7 +916,6 @@ class SchedulePage(BasePage):
         for e in entries:
             self.listw.addItem(e)
 
-        # show legacy entries if any (pre-calendar data)
         legacy = self.data.get("__all__")
         if legacy:
             self.listw.addItem("---- Legacy entries ----")
@@ -971,7 +934,7 @@ class SchedulePage(BasePage):
         self.refresh_for_selected_date()
 
 
-# ================= TIMER (animated flip-style) =================
+# ================= TIMER (flip‑style fade) =================
 
 class TimerPage(BasePage):
     def __init__(self, goto_page, standalone=False):
@@ -993,7 +956,6 @@ class TimerPage(BasePage):
 
         self.time_label = QLabel("")
         self.time_label.setAlignment(Qt.AlignCenter)
-        self.time_label.setObjectName("BigNumber")
         self.time_label.setStyleSheet("""
             font-size: 72px;
             font-weight: 600;
@@ -1005,11 +967,10 @@ class TimerPage(BasePage):
         self.time_label.setMinimumHeight(180)
         layout.addWidget(self.time_label)
 
-        # opacity effect for flip-ish animation
         self.time_effect = QGraphicsOpacityEffect()
         self.time_label.setGraphicsEffect(self.time_effect)
         self.time_anim = QPropertyAnimation(self.time_effect, b"opacity")
-        self.time_anim.setDuration(180)
+        self.time_anim.setDuration(160)
 
         self.minutes_input = QLineEdit()
         self.minutes_input.setPlaceholderText("Minutes (default 25)")
@@ -1034,8 +995,8 @@ class TimerPage(BasePage):
 
     def _play_tick_anim(self):
         self.time_anim.stop()
-        self.time_effect.setOpacity(0.3)
-        self.time_anim.setStartValue(0.3)
+        self.time_effect.setOpacity(0.2)
+        self.time_anim.setStartValue(0.2)
         self.time_anim.setEndValue(1.0)
         self.time_anim.start()
 

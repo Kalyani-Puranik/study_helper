@@ -1,40 +1,49 @@
-# main.py
 import sys
 import os
 
 from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QWidget,
-    QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QStackedWidget, QComboBox
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QLabel, QPushButton, QStackedWidget, QComboBox
 )
+    # QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QStackedWidget, QComboBox
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFontDatabase, QPixmap, QPainter, QColor, QIcon
 
-from data_manager import load_settings, save_settings, ensure_all_defaults
+from data_manager import ensure_all_defaults, load_settings, save_settings
 from themes import build_stylesheet, THEME_NAMES, LIGHT_THEMES
 from pages import (
     LoginPage, DashboardPage, TodoPage, NotesPage,
-    FlashcardsPage, ResourcesPage, SchedulePage,
-    TimerPage,
+    FlashcardsPage, ResourcesPage, SchedulePage, TimerPage
 )
+
+
+class StandaloneWindow(QMainWindow):
+    """Pop-out window for any page."""
+    def __init__(self, page_cls, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Student Helper")
+        page = page_cls(goto_page=None, standalone=True)
+        self.setCentralWidget(page)
+        self.resize(850, 550)
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+
+        # Make sure data folder and JSONs exist
+        ensure_all_defaults()
+
         self.setWindowTitle("Student Helper")
         self.resize(1000, 650)
-
-        # make sure all json files exist
-        ensure_all_defaults()
 
         self.current_user = None
         self.child_windows = []
 
-        # pretty handwriting font if available
+        # load handwriting font if present
         self.font_name = self.load_handwriting_font()
 
-        # load settings (theme, dark mode, last user, font)
+        # settings & theme
         self.settings = load_settings()
         self.theme_name = self.settings.get("theme", "Pink")
         if self.theme_name not in THEME_NAMES:
@@ -42,31 +51,30 @@ class MainWindow(QMainWindow):
         self.dark_mode = bool(self.settings.get("dark", False))
         self.current_user = self.settings.get("last_user") or None
 
-        # ---------- root layout ----------
         central = QWidget()
         root = QVBoxLayout()
         central.setLayout(root)
         self.setCentralWidget(central)
 
-        # ---------- top bar ----------
+        # ---------- Top bar ----------
         top_bar = QHBoxLayout()
 
         self.title_label = QLabel("Student Helper")
+        if self.current_user:
+            self.title_label.setText("Student Helper — " + self.current_user)
         self.title_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.title_label.setStyleSheet("font-size: 18px; font-weight: 600;")
         top_bar.addWidget(self.title_label)
 
         top_bar.addStretch()
 
-        # theme selector dropdown
         self.theme_combo = QComboBox()
-        self.theme_combo.setFixedWidth(150)
+        self.theme_combo.setFixedWidth(140)
         self.populate_theme_combo()
         self.theme_combo.setCurrentText(self.theme_name)
         self.theme_combo.currentTextChanged.connect(self.change_theme)
         top_bar.addWidget(self.theme_combo)
 
-        # dark / light mode toggle
         self.dark_btn = QPushButton("☾" if not self.dark_mode else "☀")
         self.dark_btn.setFixedWidth(40)
         self.dark_btn.setStyleSheet("border-radius: 12px; padding: 4px;")
@@ -76,20 +84,16 @@ class MainWindow(QMainWindow):
 
         root.addLayout(top_bar)
 
-        # ---------- main area: sidebar + stacked pages ----------
-        content_row = QHBoxLayout()
-        root.addLayout(content_row)
+        # ---------- Body: sidebar + stacked pages ----------
+        body = QHBoxLayout()
 
-        # sidebar navigation
+        # Sidebar
         self.sidebar = QWidget()
         side_layout = QVBoxLayout()
-        side_layout.setContentsMargins(0, 0, 0, 0)
-        side_layout.setSpacing(8)
+        side_layout.setAlignment(Qt.AlignTop)
         self.sidebar.setLayout(side_layout)
 
-        self.nav_buttons = {}
-
-        nav_items = [
+        nav_buttons = [
             ("Dashboard", "dashboard"),
             ("To-Do", "todo"),
             ("Notes", "notes"),
@@ -98,77 +102,66 @@ class MainWindow(QMainWindow):
             ("Schedule", "schedule"),
             ("Timer", "timer"),
         ]
-
-        for label, key in nav_items:
-            btn = QPushButton(label)
-            btn.setCursor(Qt.PointingHandCursor)
-            # let global theme stylesheet handle colors
+        self.nav_btns = {}
+        for text, key in nav_buttons:
+            btn = QPushButton(text)
+            btn.setStyleSheet("border-radius: 10px; padding: 8px 10px;")
             btn.clicked.connect(lambda _, p=key: self.switch_to(p))
             side_layout.addWidget(btn)
-            self.nav_buttons[key] = btn
+            self.nav_btns[key] = btn
 
         side_layout.addStretch(1)
-        content_row.addWidget(self.sidebar)
+        body.addWidget(self.sidebar, 0)
 
-        # stacked pages on the right
+        # Stack
         self.stack = QStackedWidget()
-        content_row.addWidget(self.stack, 1)
+        body.addWidget(self.stack, 1)
 
-        # ---------- pages ----------
+        root.addLayout(body)
+
+        # ---------- Create pages ----------
         self.pages = {}
-        self.pages["login"] = LoginPage(self.switch_to, self.set_current_user)
-        self.pages["dashboard"] = DashboardPage(
-            self.switch_to,
-            self.open_in_new_window,
-            self.get_current_user,
-            self.logout,
+        self.page_order = []
+
+        self.add_page("login", LoginPage(self.switch_to, self.set_current_user))
+        self.add_page(
+            "dashboard",
+            DashboardPage(
+                self.switch_to,
+                self.open_in_new_window,
+                self.get_current_user,
+                self.logout,
+            ),
         )
-        self.pages["todo"] = TodoPage(self.switch_to)
-        self.pages["notes"] = NotesPage(self.switch_to)
-        self.pages["flashcards"] = FlashcardsPage(self.switch_to)
-        self.pages["resources"] = ResourcesPage(self.switch_to)
-        self.pages["schedule"] = SchedulePage(self.switch_to)
-        self.pages["timer"] = TimerPage(self.switch_to)
+        self.add_page("todo", TodoPage(self.switch_to))
+        self.add_page("notes", NotesPage(self.switch_to))
+        self.add_page("flashcards", FlashcardsPage(self.switch_to))
+        self.add_page("resources", ResourcesPage(self.switch_to))
+        self.add_page("schedule", SchedulePage(self.switch_to))
+        self.add_page("timer", TimerPage(self.switch_to))
 
-        self.page_order = [
-            "login", "dashboard", "todo", "notes",
-            "flashcards", "resources", "schedule",
-            "timer",
-        ]
-
-        for key in self.page_order:
-            self.stack.addWidget(self.pages[key])
-
-        # auto-jump if user remembered
+        # start page
         if self.current_user:
-            self.title_label.setText("Student Helper — " + self.current_user)
             self.switch_to("dashboard")
         else:
             self.switch_to("login")
 
-        # apply theme last so everything picks it up
+        # apply theme
         self.apply_theme()
 
     # ---------- fonts & themes ----------
 
     def load_handwriting_font(self):
-        """
-        Try loading assets/handwriting.ttf; fall back to Avenir.
-        """
         assets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
         ttf_path = os.path.join(assets_dir, "handwriting.ttf")
         if os.path.exists(ttf_path):
             font_id = QFontDatabase.addApplicationFont(ttf_path)
-            if font_id != -1:
-                families = QFontDatabase.applicationFontFamilies(font_id)
-                if families:
-                    return families[0]
+            families = QFontDatabase.applicationFontFamilies(font_id)
+            if families:
+                return families[0]
         return "Avenir"
 
     def populate_theme_combo(self):
-        """
-        Fill the theme selector with a cute color icon for each theme.
-        """
         self.theme_combo.clear()
         for name in THEME_NAMES:
             colors = LIGHT_THEMES[name]
@@ -177,12 +170,12 @@ class MainWindow(QMainWindow):
             p = QPainter(pix)
             p.setRenderHint(QPainter.Antialiasing)
 
-            # big circle = button color
+            # big circle = accent
             p.setBrush(QColor(colors["button_bg"]))
             p.setPen(Qt.NoPen)
             p.drawEllipse(1, 1, 18, 18)
 
-            # little arc = card background
+            # little arc = card bg
             p.setBrush(QColor(colors["card_bg"]))
             p.drawPie(1, 1, 18, 18, 90 * 16, 180 * 16)
 
@@ -212,13 +205,32 @@ class MainWindow(QMainWindow):
         self.settings["font"] = self.font_name
         save_settings(self.settings)
 
-    # ---------- user / navigation ----------
+    # ---------- page management ----------
+
+    def add_page(self, key, widget):
+        self.pages[key] = widget
+        self.page_order.append(key)
+        self.stack.addWidget(widget)
+
+    def switch_to(self, key):
+        if key not in self.pages:
+            key = "login"
+        self.stack.setCurrentWidget(self.pages[key])
+
+        # hide sidebar for login only
+        self.sidebar.setVisible(key != "login")
+
+        if key == "dashboard":
+            page = self.pages["dashboard"]
+            if hasattr(page, "refresh"):
+                page.refresh()
+
+    # ---------- user callbacks ----------
 
     def set_current_user(self, username):
         self.current_user = username
         self.title_label.setText("Student Helper — " + username)
         self.save_settings()
-        self.switch_to("dashboard")
 
     def get_current_user(self):
         return self.current_user
@@ -229,26 +241,9 @@ class MainWindow(QMainWindow):
         self.save_settings()
         self.switch_to("login")
 
-    def switch_to(self, key):
-        if key not in self.page_order:
-            key = "login"
-        index = self.page_order.index(key)
-        self.stack.setCurrentIndex(index)
-
-        # let dashboard recompute progress
-        if key == "dashboard":
-            page = self.pages["dashboard"]
-            if hasattr(page, "refresh"):
-                page.refresh()
-
-    # ---------- multi-window popouts ----------
+    # ---------- multi window ----------
 
     def open_in_new_window(self, key):
-        """
-        Open a tool (todo, notes, etc.) in a separate window.
-        """
-        from PyQt5.QtWidgets import QMainWindow
-
         cls_map = {
             "todo": TodoPage,
             "notes": NotesPage,
@@ -259,18 +254,8 @@ class MainWindow(QMainWindow):
         }
         if key not in cls_map:
             return
-
-        cls = cls_map[key]
-        win = QMainWindow(self)
-        win.setWindowTitle("Student Helper — " + key.title())
-        page = cls(None, standalone=True)
-        win.setCentralWidget(page)
-        win.resize(800, 550)
+        win = StandaloneWindow(cls_map[key], parent=self)
         win.show()
-
-        # keep reference so it doesn't get garbage-collected
-        if not hasattr(self, "child_windows"):
-            self.child_windows = []
         self.child_windows.append(win)
 
 

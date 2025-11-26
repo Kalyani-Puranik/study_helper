@@ -2,15 +2,5 @@
     {
         "task": "hi",
         "priority": "High"
-    },
-    {
-        "text": "finish chem notes",
-        "priority": "Medium",
-        "done": true
-    },
-    {
-        "text": "finish maths problems",
-        "priority": "High",
-        "done": true
     }
 ]

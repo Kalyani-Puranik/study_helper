@@ -1,4 +1,3 @@
-# data_manager.py
 import os
 import json
 
@@ -8,9 +7,7 @@ os.makedirs(DATA_DIR, exist_ok=True)
 
 
 def _file_path(name):
-    """
-    Build an absolute path inside the data/ folder.
-    """
+    """Build an absolute path inside the data/ folder."""
     return os.path.join(DATA_DIR, name)
 
 
@@ -75,7 +72,7 @@ def save_users(users):
 
 
 # -------------------------------------------------------------------
-# SETTINGS (theme, dark mode, last user, optional font)
+# SETTINGS (theme, dark mode, last user, font)
 # -------------------------------------------------------------------
 
 def load_settings():
@@ -85,7 +82,7 @@ def load_settings():
         "theme": "Pink",
         "dark": False,
         "last_user": "",
-        "font": "Avenir"   # optional, used if you add custom font
+        "font": "Avenir"
     }
     """
     default = {
@@ -96,7 +93,6 @@ def load_settings():
     }
     settings = load_json("settings.json", default)
 
-    # ensure all keys exist even if older file
     for k, v in default.items():
         if k not in settings:
             settings[k] = v
@@ -109,7 +105,7 @@ def save_settings(settings):
 
 
 # -------------------------------------------------------------------
-# OPTIONAL: convenience "bootstrap" so files always exist
+# Bootstrap all JSON files once
 # -------------------------------------------------------------------
 
 def ensure_all_defaults():
@@ -117,10 +113,20 @@ def ensure_all_defaults():
     Call this once in main.py to guarantee that all JSON files exist.
     It won't overwrite anything non-empty.
     """
+    # To-dos: list of {"text", "priority", "done"}
     load_json("todos.json", [])
-    load_json("resources.json", [])
+
+    # Flashcards: list of {"front", "back", "known"}
     load_json("flashcards.json", [])
+
+    # Notes: { "folders": { "Subject": {"content": "..."} } }
     load_json("notes.json", {"folders": {}})
+
+    # Resources: simple list of URLs
+    load_json("resources.json", [])
+
+    # Schedule: {"yyyy-MM-dd": ["entry1", "entry2"], "__all__": [...] (legacy)}
     load_json("schedule.json", {})
+
     load_users()
     load_settings()
