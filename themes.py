@@ -201,18 +201,4 @@ def build_stylesheet(theme_name, dark, font=None):
         theme_name = "Pink"
     t = base[theme_name].copy()
     t["font"] = font or DEFAULT_FONT
-
-    sheet = BASE_WIDGETS.format(**t)
-
-    # Make dark theme pop a bit more (without changing your hex codes)
-    if dark:
-        sheet += """
-        QLabel {
-            font-weight: 600;
-        }
-        QPushButton {
-            font-weight: 600;
-        }
-        """
-
-    return sheet
+    return BASE_WIDGETS.format(**t)

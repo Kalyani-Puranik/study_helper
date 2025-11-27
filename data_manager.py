@@ -127,7 +127,7 @@ def ensure_all_defaults():
     #       "Subject": {
     #           "complete": false,
     #           "units": {
-    #               "Unit 1": {"content": "..." },
+    #               "Unit 1": {"content": "..."},
     #               ...
     #           }
     #       }

@@ -1,1 +1,7 @@
-[]
+[
+    {
+        "front": "hi",
+        "back": "hello",
+        "known": true
+    }
+]
