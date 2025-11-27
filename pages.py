@@ -154,13 +154,6 @@ def normalize_schedule_data(raw):
 
 
 class MultiRingProgress(QWidget):
-    """
-    Concentric animated rings in Pinterest-style, using theme accent colours.
-
-    - Expects a callback get_theme_colors() -> current theme dict
-    - Use set_items([("Tasks", 0.4), ("Flashcards", 0.6), ("Notes", 0.2)])
-    """
-
     def __init__(self, get_theme_colors, parent=None):
         super().__init__(parent)
         self._get_theme_colors = get_theme_colors
@@ -171,7 +164,7 @@ class MultiRingProgress(QWidget):
         self._animation.setDuration(900)
         self._animation.setEasingCurve(QEasingCurve.InOutCubic)
 
-        self.setMinimumSize(260, 260)
+        self.setMinimumSize(400, 400)
 
     def get_anim_progress(self):
         return self._anim_progress
@@ -179,7 +172,7 @@ class MultiRingProgress(QWidget):
     def set_anim_progress(self, value):
         self._anim_progress = float(value)
         self.update()
-
+        
     animProgress = pyqtProperty(float, fget=get_anim_progress, fset=set_anim_progress)
 
     def set_items(self, items):
