@@ -1,4 +1,3 @@
-# data_manager.py
 import os
 import json
 
@@ -125,13 +124,13 @@ def ensure_all_defaults():
     # Notes:
     # {
     #   "folders": {
-    #     "Subject": {
-    #       "complete": false,
-    #       "units": {
-    #         "Unit 1": {"content": "..." },
-    #         ...
+    #       "Subject": {
+    #           "complete": false,
+    #           "units": {
+    #               "Unit 1": {"content": "..." },
+    #               ...
+    #           }
     #       }
-    #     }
     #   }
     # }
     load_json("notes.json", {"folders": {}})
@@ -139,11 +138,11 @@ def ensure_all_defaults():
     # Resources:
     # {
     #   "subjects": {
-    #     "Subject": {
-    #       "units": {
-    #         "Unit 1": ["link1", "link2"]
+    #       "Subject": {
+    #           "units": {
+    #               "Unit 1": ["link1", "link2"]
+    #           }
     #       }
-    #     }
     #   }
     # }
     load_json("resources.json", {"subjects": {}})
@@ -151,6 +150,5 @@ def ensure_all_defaults():
     # Schedule: {"yyyy-MM-dd": ["entry1", "entry2"], "__all__": [...] (legacy)}
     load_json("schedule.json", {})
 
-    # Ensure users/settings exist
     load_users()
     load_settings()

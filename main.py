@@ -3,7 +3,7 @@ import os
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QPushButton, QStackedWidget, QComboBox
+    QLabel, QPushButton, QStackedWidget, QComboBox, QSizePolicy
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFontDatabase, QPixmap, QPainter, QColor, QIcon
@@ -21,23 +21,28 @@ class StandaloneWindow(QMainWindow):
     def __init__(self, page_cls, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Student Helper")
+
         page = page_cls(goto_page=None, standalone=True)
         self.setCentralWidget(page)
-        self.resize(850, 550)
+
+        # Resizable window
+        self.resize(900, 600)
+        self.setMinimumSize(700, 450)
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        # Make sure data files exist
         ensure_all_defaults()
 
         self.setWindowTitle("Student Helper")
-        self.resize(1000, 650)
+        self.resize(1100, 700)
+        self.setMinimumSize(900, 550)
 
         self.current_user = None
         self.child_windows = []
+        self.sidebar_collapsed = False
 
         # load handwriting font if present
         self.font_name = self.load_handwriting_font()
@@ -52,6 +57,7 @@ class MainWindow(QMainWindow):
 
         central = QWidget()
         root = QVBoxLayout()
+        root.setContentsMargins(10, 10, 10, 10)
         central.setLayout(root)
         self.setCentralWidget(central)
 
@@ -67,25 +73,29 @@ class MainWindow(QMainWindow):
 
         top_bar.addStretch()
 
-        # theme combo with ONLY coloured circles (no text)
+        # Theme selector with only coloured circles (no text)
         self.theme_combo = QComboBox()
         self.theme_combo.setFixedWidth(90)
         self.populate_theme_combo()
-        # set current index by theme name
-        try:
-            idx = THEME_NAMES.index(self.theme_name)
-        except ValueError:
-            idx = 0
-        self.theme_combo.setCurrentIndex(idx)
+        self.set_theme_combo_index_from_name(self.theme_name)
         self.theme_combo.currentIndexChanged.connect(self.change_theme)
         top_bar.addWidget(self.theme_combo)
 
+        # Dark / Light toggle
         self.dark_btn = QPushButton("☾" if not self.dark_mode else "☀")
         self.dark_btn.setFixedWidth(40)
         self.dark_btn.setStyleSheet("border-radius: 12px; padding: 4px;")
         self.dark_btn.setToolTip("Toggle dark / light")
         self.dark_btn.clicked.connect(self.toggle_dark)
         top_bar.addWidget(self.dark_btn)
+
+        # Sidebar collapse / expand button
+        self.toggle_sidebar_btn = QPushButton("☰")
+        self.toggle_sidebar_btn.setFixedWidth(40)
+        self.toggle_sidebar_btn.setStyleSheet("border-radius: 12px; padding: 4px;")
+        self.toggle_sidebar_btn.setToolTip("Hide / Show Sidebar")
+        self.toggle_sidebar_btn.clicked.connect(self.toggle_sidebar)
+        top_bar.addWidget(self.toggle_sidebar_btn)
 
         root.addLayout(top_bar)
 
@@ -111,6 +121,7 @@ class MainWindow(QMainWindow):
         for text, key in nav_buttons:
             btn = QPushButton(text)
             btn.setStyleSheet("border-radius: 10px; padding: 8px 10px;")
+            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             btn.clicked.connect(lambda _, p=key: self.switch_to(p))
             side_layout.addWidget(btn)
             self.nav_btns[key] = btn
@@ -120,6 +131,7 @@ class MainWindow(QMainWindow):
 
         # Stack
         self.stack = QStackedWidget()
+        self.stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         body.addWidget(self.stack, 1)
 
         root.addLayout(body)
@@ -134,12 +146,12 @@ class MainWindow(QMainWindow):
             DashboardPage(self.switch_to, self.open_in_new_window,
                           self.get_current_user, self.logout),
         )
-        self.add_page("todo", TodoPage(self.switch_to))
-        self.add_page("notes", NotesPage(self.switch_to))
+        self.add_page("todo",    TodoPage(self.switch_to))
+        self.add_page("notes",   NotesPage(self.switch_to))
         self.add_page("flashcards", FlashcardsPage(self.switch_to))
-        self.add_page("resources", ResourcesPage(self.switch_to))
-        self.add_page("schedule", SchedulePage(self.switch_to))
-        self.add_page("timer", TimerPage(self.switch_to))
+        self.add_page("resources",  ResourcesPage(self.switch_to))
+        self.add_page("schedule",   SchedulePage(self.switch_to))
+        self.add_page("timer",      TimerPage(self.switch_to))
 
         # start page
         if self.current_user:
@@ -162,10 +174,11 @@ class MainWindow(QMainWindow):
         return "Avenir"
 
     def populate_theme_combo(self):
+        """Populate combo with coloured circles only; store names in itemData."""
         self.theme_combo.clear()
         for name in THEME_NAMES:
             colors = LIGHT_THEMES[name]
-            pix = QPixmap(20, 20)
+            pix = QPixmap(22, 22)
             pix.fill(Qt.transparent)
             p = QPainter(pix)
             p.setRenderHint(QPainter.Antialiasing)
@@ -173,29 +186,39 @@ class MainWindow(QMainWindow):
             # big circle = accent
             p.setBrush(QColor(colors["button_bg"]))
             p.setPen(Qt.NoPen)
-            p.drawEllipse(1, 1, 18, 18)
+            p.drawEllipse(1, 1, 20, 20)
 
-            # little arc = card bg
+            # small circle inside = card bg
             p.setBrush(QColor(colors["card_bg"]))
-            p.drawPie(1, 1, 18, 18, 90 * 16, 180 * 16)
+            p.drawEllipse(6, 6, 10, 10)
 
             p.end()
             icon = QIcon(pix)
 
-            # add ONLY icon (no visible text)
-            self.theme_combo.addItem(icon, "")
+            index = self.theme_combo.count()
+            self.theme_combo.addItem(icon, "")            # no visible name
+            self.theme_combo.setItemData(index, name)     # store actual theme name
+
+    def set_theme_combo_index_from_name(self, theme_name):
+        index_to_set = 0
+        for i in range(self.theme_combo.count()):
+            if self.theme_combo.itemData(i) == theme_name:
+                index_to_set = i
+                break
+        self.theme_combo.setCurrentIndex(index_to_set)
 
     def apply_theme(self):
         sheet = build_stylesheet(self.theme_name, self.dark_mode, self.font_name)
         self.setStyleSheet(sheet)
         self.dark_btn.setText("☾" if not self.dark_mode else "☀")
 
-    def change_theme(self, index: int):
-        # index corresponds to THEME_NAMES
-        if 0 <= index < len(THEME_NAMES):
-            self.theme_name = THEME_NAMES[index]
-            self.apply_theme()
-            self.save_settings()
+    def change_theme(self, index):
+        name = self.theme_combo.itemData(index)
+        if not name:
+            return
+        self.theme_name = name
+        self.apply_theme()
+        self.save_settings()
 
     def toggle_dark(self):
         self.dark_mode = not self.dark_mode
@@ -209,6 +232,21 @@ class MainWindow(QMainWindow):
         self.settings["font"] = self.font_name
         save_settings(self.settings)
 
+    # ---------- sidebar toggle ----------
+
+    def toggle_sidebar(self):
+        """Collapse / expand the sidebar."""
+        if self.sidebar.isVisible():
+            self.sidebar.hide()
+            self.sidebar_collapsed = True
+        else:
+            # Don't show sidebar on login page
+            current_widget = self.stack.currentWidget()
+            if current_widget is self.pages.get("login"):
+                return
+            self.sidebar.show()
+            self.sidebar_collapsed = False
+
     # ---------- page management ----------
 
     def add_page(self, key, widget):
@@ -219,10 +257,15 @@ class MainWindow(QMainWindow):
     def switch_to(self, key):
         if key not in self.pages:
             key = "login"
+
         self.stack.setCurrentWidget(self.pages[key])
 
-        # hide sidebar for login only
-        self.sidebar.setVisible(key != "login")
+        # Sidebar visibility: always hidden on login, otherwise follow collapse state
+        if key == "login":
+            self.sidebar.hide()
+        else:
+            if not self.sidebar_collapsed:
+                self.sidebar.show()
 
         if key == "dashboard":
             page = self.pages["dashboard"]
@@ -235,6 +278,7 @@ class MainWindow(QMainWindow):
         self.current_user = username
         self.title_label.setText("Student Helper — " + username)
         self.save_settings()
+        self.switch_to("dashboard")
 
     def get_current_user(self):
         return self.current_user
@@ -252,9 +296,9 @@ class MainWindow(QMainWindow):
             "todo":      TodoPage,
             "notes":     NotesPage,
             "flashcards": FlashcardsPage,
-            "resources": ResourcesPage,
-            "schedule":  SchedulePage,
-            "timer":     TimerPage,
+            "resources":  ResourcesPage,
+            "schedule":   SchedulePage,
+            "timer":      TimerPage,
         }
         if key not in cls_map:
             return

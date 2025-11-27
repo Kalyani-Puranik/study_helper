@@ -1,3 +1,20 @@
 {
-    "folders": {}
+    "folders": {
+        "Chemistry": {
+            "complete": false,
+            "units": {}
+        },
+        "EPD": {
+            "complete": false,
+            "units": {}
+        },
+        "Mechanics": {
+            "complete": false,
+            "units": {}
+        },
+        "Python": {
+            "complete": false,
+            "units": {}
+        }
+    }
 }
