@@ -40,6 +40,11 @@ QListWidget {{
 
 QLabel {{
     color: {fg};
+    font-weight: 500;
+}}
+
+QFrame {{
+    background-color: {card_bg};
 }}
 
 QProgressBar {{

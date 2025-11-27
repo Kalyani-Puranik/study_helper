@@ -57,6 +57,7 @@ def save_json(name, data):
 # USERS
 # -------------------------------------------------------------------
 
+
 def load_users():
     """
     Users are stored as:
@@ -76,6 +77,7 @@ def save_users(users):
 # -------------------------------------------------------------------
 # SETTINGS (theme, dark mode, last user, font)
 # -------------------------------------------------------------------
+
 
 def load_settings():
     """
@@ -110,6 +112,7 @@ def save_settings(settings):
 # Bootstrap all JSON files once
 # -------------------------------------------------------------------
 
+
 def ensure_all_defaults():
     """
     Call this once in main.py to guarantee that all JSON files exist.
@@ -121,18 +124,7 @@ def ensure_all_defaults():
     # Flashcards: list of {"front", "back", "known"}
     load_json("flashcards.json", [])
 
-    # Notes:
-    # {
-    #   "folders": {
-    #       "Subject": {
-    #           "complete": false,
-    #           "units": {
-    #               "Unit 1": {"content": "..."},
-    #               ...
-    #           }
-    #       }
-    #   }
-    # }
+    # Notes: normalized via NotesPage helper
     load_json("notes.json", {"folders": {}})
 
     # Resources:

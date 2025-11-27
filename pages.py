@@ -1,21 +1,51 @@
 from PyQt5.QtWidgets import (
-    QWidget, QPushButton, QLabel, QVBoxLayout, QHBoxLayout,
-    QLineEdit, QTextEdit, QListWidget, QListWidgetItem,
-    QComboBox, QMessageBox, QCalendarWidget,
-    QGraphicsOpacityEffect, QGridLayout, QFrame, QInputDialog
+    QWidget,
+    QPushButton,
+    QLabel,
+    QVBoxLayout,
+    QHBoxLayout,
+    QLineEdit,
+    QTextEdit,
+    QListWidget,
+    QListWidgetItem,
+    QComboBox,
+    QMessageBox,
+    QCalendarWidget,
+    QGraphicsOpacityEffect,
+    QGridLayout,
+    QFrame,
+    QInputDialog,
 )
-from PyQt5.QtCore import Qt, QUrl, QTimer, QPropertyAnimation, QRectF, QDate
+from PyQt5.QtCore import (
+    Qt,
+    QUrl,
+    QTimer,
+    QPropertyAnimation,
+    QRectF,
+    QDate,
+    pyqtProperty,
+    QEasingCurve,
+)
 from PyQt5.QtGui import (
-    QDesktopServices, QIcon, QPixmap, QPainter, QColor, QPen, QFont
+    QDesktopServices,
+    QIcon,
+    QPixmap,
+    QPainter,
+    QColor,
+    QPen,
+    QFont,
 )
 
 from data_manager import (
-    load_json, save_json,
-    load_users, save_users,
-    load_settings, save_settings
+    load_json,
+    save_json,
+    load_users,
+    save_users,
+    load_settings,
+    save_settings,
 )
 
-# ---------- SHARED STYLES (NO COLORS HERE; THEMES HANDLE COLORS) ----------
+# ---------- Shared styles (colors come from theme stylesheet) ----------
 
 CARD_STYLE = """
     border-radius: 18px;
@@ -32,18 +62,16 @@ TEXT_STYLE = "font-size: 14px;"
 
 
 def make_open_window_icon(size=20):
-    """Tiny drawn icon for 'open in new window' (used if needed in pages)."""
+    """Tiny drawn icon for 'open in new window'."""
     pix = QPixmap(size, size)
     pix.fill(Qt.transparent)
     p = QPainter(pix)
     p.setRenderHint(QPainter.Antialiasing)
 
-    # square outline
     p.setPen(QColor(80, 80, 80))
     p.setBrush(Qt.NoBrush)
     p.drawRoundedRect(3, 3, size - 6, size - 6, 3, 3)
 
-    # plus sign
     mid = size // 2
     p.drawLine(mid, 5, mid, size - 5)
     p.drawLine(5, mid, size - 5, mid)
@@ -52,101 +80,214 @@ def make_open_window_icon(size=20):
     return QIcon(pix)
 
 
-# ================= SMALL WIDGET: CONCENTRIC PROGRESS =================
+# ---------- Helpers for legacy data ----------
 
-class ConcentricProgress(QWidget):
+def normalize_notes_data(data):
     """
-    Three concentric progress rings (Tasks, Flashcards, Notes).
-    Colours come from the current palette highlight (theme accent),
-    and are slightly darkened/lightened for multi-shade effect.
+    Normalise any previous notes.json format into:
+    {
+        "folders": {
+            "Subject": {
+                "complete": bool,
+                "units": {
+                    "Unit name": {"content": "..."}
+                }
+            }
+        }
+    }
+    """
+    if not isinstance(data, dict):
+        data = {}
+    folders = data.get("folders", {})
+
+    # If folders is a list of names, convert
+    if isinstance(folders, list):
+        new_f = {}
+        for f in folders:
+            if isinstance(f, str):
+                new_f[f] = {"complete": False, "units": {}}
+        folders = new_f
+
+    if not isinstance(folders, dict):
+        folders = {}
+
+    changed = False
+    for name, val in list(folders.items()):
+        if isinstance(val, dict):
+            # Old shape: {"content": "..."}
+            if "units" not in val and "content" in val:
+                content = val.get("content", "")
+                folders[name] = {
+                    "complete": False,
+                    "units": {"General": {"content": content}},
+                }
+                changed = True
+            else:
+                if "complete" not in val:
+                    val["complete"] = False
+                    changed = True
+                if "units" not in val or not isinstance(val["units"], dict):
+                    val["units"] = {}
+                    changed = True
+        else:
+            folders[name] = {"complete": False, "units": {}}
+            changed = True
+
+    data["folders"] = folders
+    if changed:
+        save_json("notes.json", data)
+    return data
+
+
+def normalize_schedule_data(raw):
+    """
+    Legacy schedule.json might be a list; new is a dict.
+    """
+    if isinstance(raw, list):
+        return {"__all__": raw}
+    if not isinstance(raw, dict):
+        return {}
+    return raw
+
+
+# ================== Multi-ring circular progress ==================
+
+
+class MultiRingProgress(QWidget):
+    """
+    Concentric animated rings in Pinterest-style, using theme accent colours.
+
+    - Expects a callback get_theme_colors() -> current theme dict
+    - Use set_items([("Tasks", 0.4), ("Flashcards", 0.6), ("Notes", 0.2)])
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, get_theme_colors, parent=None):
         super().__init__(parent)
-        # each metric is (value, maximum)
-        self.tasks = (0, 1)
-        self.flash = (0, 1)
-        self.notes = (0, 1)
-        self.setMinimumSize(220, 220)
+        self._get_theme_colors = get_theme_colors
+        self._items = []  # list of (label, ratio)
+        self._anim_progress = 0.0
 
-    def _normalize_pair(self, pair):
-        if not pair or len(pair) != 2:
-            return (0, 1)
-        value, maximum = pair
-        if maximum <= 0:
-            maximum = 1
-        value = max(0, min(value, maximum))
-        return (value, maximum)
+        self._animation = QPropertyAnimation(self, b"animProgress")
+        self._animation.setDuration(900)
+        self._animation.setEasingCurve(QEasingCurve.InOutCubic)
 
-    def set_metrics(self, tasks_pair, flash_pair, notes_pair):
-        self.tasks = self._normalize_pair(tasks_pair)
-        self.flash = self._normalize_pair(flash_pair)
-        self.notes = self._normalize_pair(notes_pair)
+        self.setMinimumSize(260, 260)
+
+    def get_anim_progress(self):
+        return self._anim_progress
+
+    def set_anim_progress(self, value):
+        self._anim_progress = float(value)
         self.update()
 
+    animProgress = pyqtProperty(float, fget=get_anim_progress, fset=set_anim_progress)
+
+    def set_items(self, items):
+        """
+        items: list of (label, ratio 0..1)
+        """
+        self._items = list(items)
+        self._animation.stop()
+        self._anim_progress = 0.0
+        self._animation.setStartValue(0.0)
+        self._animation.setEndValue(1.0)
+        self._animation.start()
+
+    def theme_changed(self):
+        """Call when theme updates."""
+        self.update()
+
+    def _theme_colors_for_rings(self):
+        colors = self._get_theme_colors()
+        accent = QColor(colors.get("accent", "#cccccc"))
+        hover = QColor(colors.get("accent_hover", colors.get("accent", "#bbbbbb")))
+        button_bg = QColor(colors.get("button_bg", colors.get("accent", "#bbbbbb")))
+
+        # Three shades: outer = darker, mid = base, inner = lighter / hover
+        outer = accent.darker(120)
+        mid = button_bg
+        inner = hover.lighter(115)
+        return [outer, mid, inner]
+
     def paintEvent(self, event):
+        if not self._items:
+            return
+
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
 
         size = min(self.width(), self.height())
-        center = self.rect().center()
-        outer_radius = size / 2 - 10
-        ring_width = 10
+        center_x = self.width() / 2.0
+        center_y = self.height() / 2.0
 
-        # theme-driven colors
-        accent = self.palette().highlight().color()
-        outer_color = accent.darker(110)
-        mid_color = accent
-        inner_color = accent.lighter(130)
+        ring_thickness = size * 0.08
+        spacing = size * 0.02
+        max_radius = (size / 2.0) - ring_thickness - 8
 
-        bg_ring = self.palette().mid().color()
+        # Background rings & progress rings
+        ring_colors = self._theme_colors_for_rings()
+        bg_color = self.palette().window().color()
+        text_color = self.palette().text().color()
 
-        def draw_ring(value, maximum, radius, color):
+        base_rect = QRectF(
+            center_x - max_radius,
+            center_y - max_radius,
+            2 * max_radius,
+            2 * max_radius,
+        )
+
+        for idx, item in enumerate(self._items):
+            label, ratio = item
+            if ratio < 0.0:
+                ratio = 0.0
+            if ratio > 1.0:
+                ratio = 1.0
+
+            # radii from outside to inside
+            offset = idx * (ring_thickness + spacing)
             rect = QRectF(
-                center.x() - radius,
-                center.y() - radius,
-                2 * radius,
-                2 * radius,
+                base_rect.left() + offset,
+                base_rect.top() + offset,
+                base_rect.width() - 2 * offset,
+                base_rect.height() - 2 * offset,
             )
-            # background circle
-            p.setPen(QPen(bg_ring, ring_width, Qt.SolidLine, Qt.RoundCap))
+
+            # background ring
+            p.setPen(QPen(bg_color.lighter(130), ring_thickness))
             p.setBrush(Qt.NoBrush)
             p.drawArc(rect, 0, 360 * 16)
 
-            # progress arc
-            span_angle = 360.0 * (value / float(maximum))
-            p.setPen(QPen(color, ring_width, Qt.SolidLine, Qt.RoundCap))
+            # progress ring
+            span_angle = 360.0 * ratio * self._anim_progress
+            color = ring_colors[min(idx, len(ring_colors) - 1)]
+            p.setPen(QPen(color, ring_thickness, Qt.SolidLine, Qt.RoundCap))
             p.drawArc(rect, -90 * 16, -span_angle * 16)
 
-        tasks_v, tasks_max = self.tasks
-        flash_v, flash_max = self.flash
-        notes_v, notes_max = self.notes
-
-        # outer → tasks, middle → flashcards, inner → notes
-        draw_ring(tasks_v, tasks_max, outer_radius, outer_color)
-        draw_ring(flash_v, flash_max, outer_radius - ring_width * 1.5, mid_color)
-        draw_ring(notes_v, notes_max, outer_radius - ring_width * 3.0, inner_color)
-
-        # center label
-        inner_radius = max(outer_radius - ring_width * 4.0, 20)
-        inner_rect = QRectF(
-            center.x() - inner_radius,
-            center.y() - inner_radius,
-            2 * inner_radius,
-            2 * inner_radius,
-        )
-
-        p.setPen(self.palette().text().color())
+        # Center text: show percentages for each
+        p.setPen(text_color)
         font = QFont(self.font())
-        font.setPointSize(10)
-        font.setBold(True)
+        font.setPointSize(11)
+        font.setWeight(QFont.DemiBold)
         p.setFont(font)
-        p.drawText(inner_rect, Qt.AlignCenter, "Progress")
+
+        lines = []
+        for label, ratio in self._items:
+            percent = int(round(ratio * 100))
+            lines.append(u"{0}: {1}%".format(label, percent))
+
+        text_rect = QRectF(
+            center_x - size * 0.22,
+            center_y - size * 0.12,
+            size * 0.44,
+            size * 0.24,
+        )
+        p.drawText(text_rect, Qt.AlignCenter, "\n".join(lines))
 
         p.end()
 
 
 # ================= BASE PAGE =================
+
 
 class BasePage(QWidget):
     def __init__(self, goto_page, standalone=False):
@@ -163,6 +304,7 @@ class BasePage(QWidget):
 
 
 # ================= LOGIN PAGE =================
+
 
 class LoginPage(QWidget):
     def __init__(self, goto_page, on_login):
@@ -228,7 +370,6 @@ class LoginPage(QWidget):
         username, password = self._get_credentials()
         if not username:
             return
-
         users = load_users()
         if username not in users:
             QMessageBox.warning(self, "User not found", "This username does not exist. Try signing up.")
@@ -236,19 +377,16 @@ class LoginPage(QWidget):
         if users[username] != password:
             QMessageBox.warning(self, "Wrong password", "The password you entered is incorrect.")
             return
-
         self.finish_login(username)
 
     def handle_signup(self):
         username, password = self._get_credentials()
         if not username:
             return
-
         users = load_users()
         if username in users:
             QMessageBox.warning(self, "User exists", "This username is already taken. Try logging in.")
             return
-
         users[username] = password
         save_users(users)
         QMessageBox.information(self, "Account created", "Your account has been created.")
@@ -258,7 +396,6 @@ class LoginPage(QWidget):
         username, password = self._get_credentials()
         if not username:
             return
-
         users = load_users()
         if username not in users:
             QMessageBox.warning(self, "User not found", "That user does not exist.")
@@ -266,11 +403,12 @@ class LoginPage(QWidget):
         if users[username] != password:
             QMessageBox.warning(self, "Wrong password", "Password incorrect.")
             return
-
         confirm = QMessageBox.question(
             self,
             "Delete user",
-            f"Delete user '{username}' and their login?\n(Notes etc. stay in shared JSON.)",
+            u"Delete user '{0}' and their login?\n(Notes etc. stay in shared JSON.)".format(
+                username
+            ),
             QMessageBox.Yes | QMessageBox.No,
         )
         if confirm == QMessageBox.Yes:
@@ -292,30 +430,36 @@ class LoginPage(QWidget):
 
 # ================= DASHBOARD =================
 
+
 class DashboardPage(QWidget):
     """
-    Dashboard only shows:
-      - Concentric progress rings (tasks, flashcards, notes)
-      - Today's To-Do (all tasks)
-      - Today's Schedule
+    New dashboard:
+    - Only big concentric progress rings
+    - Today's To-Do (all pending tasks)
+    - Today's Schedule (today's entries)
     """
 
-    def __init__(self, goto_page, open_window, get_user, logout):
+    def __init__(self, goto_page, open_window, get_user, get_theme_colors, logout):
         super().__init__()
         self.goto_page = goto_page
         self.open_window = open_window
         self.get_user = get_user
+        self.get_theme_colors = get_theme_colors
         self.logout = logout
 
         main = QVBoxLayout()
         main.setAlignment(Qt.AlignTop)
 
-        # top row: title + logout
+        # Top bar: title + user + logout
         top_row = QHBoxLayout()
-        title = QLabel("Study Helper Dashboard")
+        title = QLabel("Dashboard")
         title.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         title.setStyleSheet("font-size: 24px; font-weight: 600;")
         top_row.addWidget(title)
+
+        self.user_label = QLabel("")
+        self.user_label.setStyleSheet("margin-left: 12px; color: #777777;")
+        top_row.addWidget(self.user_label, stretch=0)
 
         top_row.addStretch()
 
@@ -326,159 +470,135 @@ class DashboardPage(QWidget):
 
         main.addLayout(top_row)
 
-        # user label
-        self.user_label = QLabel("")
-        self.user_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        self.user_label.setStyleSheet("margin-bottom: 6px; color: #666666;")
-        main.addWidget(self.user_label)
+        # Center: progress rings
+        rings_frame = QFrame()
+        rings_frame.setStyleSheet(CARD_STYLE)
+        rings_layout = QVBoxLayout()
+        rings_layout.setContentsMargins(18, 18, 18, 18)
+        rings_frame.setLayout(rings_layout)
 
-        # --------- Progress + today panes ---------
-        center_row = QHBoxLayout()
+        self.progress_rings = MultiRingProgress(self.get_theme_colors)
+        rings_layout.addWidget(self.progress_rings, alignment=Qt.AlignCenter)
 
-        # left: concentric progress & numbers
-        left_col = QVBoxLayout()
+        main.addWidget(rings_frame)
 
-        self.progress_widget = ConcentricProgress(self)
-        progress_frame = QFrame()
-        progress_frame.setStyleSheet(CARD_STYLE)
-        pf_layout = QVBoxLayout()
-        pf_layout.addWidget(self.progress_widget, alignment=Qt.AlignCenter)
-        progress_frame.setLayout(pf_layout)
-        left_col.addWidget(progress_frame)
+        # Bottom: two cards side by side: Today's To-Do, Today's Schedule
+        bottom_row = QHBoxLayout()
 
-        # labels under rings
-        labels_row = QHBoxLayout()
-        self.tasks_label = QLabel("Tasks: 0 / 0")
-        self.flash_label = QLabel("Flashcards: 0 / 0")
-        self.notes_label = QLabel("Folders complete: 0 / 0")
-        for lab in (self.tasks_label, self.flash_label, self.notes_label):
-            lab.setStyleSheet("font-size: 12px;")
-            labels_row.addWidget(lab)
-        left_col.addLayout(labels_row)
-
-        center_row.addLayout(left_col, 1)
-
-        # right: two cards – today's to-do and today's schedule
-        right_col = QVBoxLayout()
-
-        # today's to-do
-        todo_frame = QWidget()
+        # Today's To-Do
+        todo_frame = QFrame()
         todo_frame.setStyleSheet(CARD_STYLE)
-        t_layout = QVBoxLayout()
-        t_layout.setContentsMargins(12, 12, 12, 12)
+        todo_layout = QVBoxLayout()
+        todo_layout.setContentsMargins(12, 12, 12, 12)
+        todo_frame.setLayout(todo_layout)
+
         todo_title = QLabel("Today's To-Do")
-        todo_title.setStyleSheet("font-weight: 600; margin-bottom: 4px;")
+        todo_title.setStyleSheet("font-size: 16px; font-weight: 600; margin-bottom: 6px;")
+        todo_layout.addWidget(todo_title)
+
         self.todo_list = QListWidget()
-        t_layout.addWidget(todo_title)
-        t_layout.addWidget(self.todo_list)
-        todo_frame.setLayout(t_layout)
-        right_col.addWidget(todo_frame, 1)
+        self.todo_list.setStyleSheet("font-size: 13px;")
+        todo_layout.addWidget(self.todo_list)
 
-        # today's schedule
-        sched_frame = QWidget()
+        bottom_row.addWidget(todo_frame)
+
+        # Today's Schedule
+        sched_frame = QFrame()
         sched_frame.setStyleSheet(CARD_STYLE)
-        s_layout = QVBoxLayout()
-        s_layout.setContentsMargins(12, 12, 12, 12)
-        self.schedule_label = QLabel("Today's Schedule")
-        self.schedule_label.setStyleSheet("font-weight: 600; margin-bottom: 4px;")
-        self.schedule_list = QListWidget()
-        s_layout.addWidget(self.schedule_label)
-        s_layout.addWidget(self.schedule_list)
-        sched_frame.setLayout(s_layout)
-        right_col.addWidget(sched_frame, 1)
+        sched_layout = QVBoxLayout()
+        sched_layout.setContentsMargins(12, 12, 12, 12)
+        sched_frame.setLayout(sched_layout)
 
-        center_row.addLayout(right_col, 1)
+        self.today_label = QLabel("")
+        self.today_label.setStyleSheet("font-size: 16px; font-weight: 600; margin-bottom: 6px;")
+        sched_layout.addWidget(self.today_label)
 
-        main.addLayout(center_row)
+        self.today_list = QListWidget()
+        self.today_list.setStyleSheet("font-size: 13px;")
+        sched_layout.addWidget(self.today_list)
+
+        bottom_row.addWidget(sched_frame)
+
+        main.addLayout(bottom_row)
+
         main.addStretch(1)
-
         self.setLayout(main)
+
         self.refresh()
 
+    def theme_changed(self):
+        self.progress_rings.theme_changed()
+
     def refresh(self):
-        # user label
+        # User label
         user = self.get_user()
         if user:
-            self.user_label.setText("Logged in as: " + user)
+            self.user_label.setText(u"Logged in as: {0}".format(user))
         else:
             self.user_label.setText("Not logged in")
 
-        # ---------- To-do metrics ----------
+        # --- Load To-Do stats ---
         todos = load_json("todos.json", [])
         total_tasks = len(todos)
         done_tasks = sum(1 for t in todos if t.get("done"))
+        pending_tasks = [t for t in todos if not t.get("done")]
 
-        self.tasks_label.setText(f"Tasks: {done_tasks} / {total_tasks}")
-
-        # fill today's to-do (all tasks)
+        # show all pending tasks
         self.todo_list.clear()
-        if not todos:
-            self.todo_list.addItem("No tasks yet.")
+        if not pending_tasks:
+            self.todo_list.addItem("You're all caught up! ✨")
         else:
-            for t in todos:
-                status = "✓" if t.get("done") else "•"
-                priority = t.get("priority", "Low")
-                text = t.get("text", "")
-                self.todo_list.addItem(f"{status} [{priority}] {text}")
+            for t in pending_tasks:
+                label = u"[{0}] {1}".format(
+                    t.get("priority", "Low"),
+                    t.get("text", ""),
+                )
+                item = QListWidgetItem(label)
+                self.todo_list.addItem(item)
 
-        # ---------- Flashcards metrics ----------
+        tasks_ratio = (float(done_tasks) / float(total_tasks)) if total_tasks > 0 else 0.0
+
+        # --- Flashcards stats ---
         cards = load_json("flashcards.json", [])
         total_cards = len(cards)
         known_cards = sum(1 for c in cards if c.get("known"))
-        self.flash_label.setText(f"Flashcards: {known_cards} / {total_cards}")
+        flash_ratio = (float(known_cards) / float(total_cards)) if total_cards > 0 else 0.0
 
-        # ---------- Notes (folders complete) ----------
-        notes_data = load_json("notes.json", {"folders": {}})
+        # --- Notes stats (folders complete) ---
+        notes_raw = load_json("notes.json", {"folders": {}})
+        notes_data = normalize_notes_data(notes_raw)
         folders = notes_data.get("folders", {})
-
-        # handle legacy list format if needed
-        if isinstance(folders, list):
-            normalized = {}
-            for name in folders:
-                if isinstance(name, str):
-                    normalized[name] = {"complete": False, "units": {}}
-            folders = normalized
-
         total_folders = len(folders)
-        complete_folders = 0
-        for f in folders.values():
-            if isinstance(f, dict) and f.get("complete"):
-                complete_folders += 1
-
-        self.notes_label.setText(f"Folders complete: {complete_folders} / {total_folders}")
-
-        # update concentric rings
-        self.progress_widget.set_metrics(
-            (done_tasks, max(total_tasks, 1)),
-            (known_cards, max(total_cards, 1)),
-            (complete_folders, max(total_folders, 1)),
+        complete_folders = sum(1 for f in folders.values() if f.get("complete"))
+        notes_ratio = (
+            float(complete_folders) / float(total_folders) if total_folders > 0 else 0.0
         )
 
-        # ---------- Today's schedule ----------
+        # Update multi-ring
+        items = [
+            ("Tasks", tasks_ratio),
+            ("Flashcards", flash_ratio),
+            ("Notes", notes_ratio),
+        ]
+        self.progress_rings.set_items(items)
+
+        # --- Today's schedule ---
         raw_schedule = load_json("schedule.json", {})
-        if isinstance(raw_schedule, list):
-            schedule = {"__all__": raw_schedule}
-        elif isinstance(raw_schedule, dict):
-            schedule = raw_schedule
-        else:
-            schedule = {}
+        schedule = normalize_schedule_data(raw_schedule)
 
         today = QDate.currentDate().toString("yyyy-MM-dd")
-        self.schedule_label.setText(f"Today's Schedule ({today})")
-        self.schedule_list.clear()
-
+        self.today_label.setText(u"Today's Schedule — {0}".format(today))
+        self.today_list.clear()
         entries = schedule.get(today, [])
-        if not isinstance(entries, list):
-            entries = []
-
         if not entries:
-            self.schedule_list.addItem("No entries for today.")
+            self.today_list.addItem("No entries for today.")
         else:
             for e in entries:
-                self.schedule_list.addItem(str(e))
+                self.today_list.addItem(e)
 
 
-# ================= TODO PAGE (priority + done/pending) =================
+# ================= TODO PAGE =================
+
 
 class TodoPage(BasePage):
     FNAME = "todos.json"
@@ -517,11 +637,14 @@ class TodoPage(BasePage):
         input_row = QHBoxLayout()
         self.task_input = QLineEdit()
         self.task_input.setPlaceholderText("New task…")
+
         self.priority_select = QComboBox()
         self.priority_select.addItems(["High", "Medium", "Low"])
+
         add_btn = QPushButton("Add")
         add_btn.setStyleSheet(BUTTON_STYLE)
         add_btn.clicked.connect(self.add_task)
+
         input_row.addWidget(self.task_input)
         input_row.addWidget(self.priority_select)
         input_row.addWidget(add_btn)
@@ -551,14 +674,12 @@ class TodoPage(BasePage):
         save_json(self.FNAME, self.data)
 
     def _style_item(self, lw_item, priority, done):
-        # Priority badge color
         if priority == "High":
             color = "#ff6b6b"
         elif priority == "Medium":
             color = "#ffb347"
         else:
             color = "#6bd36b"
-
         if done:
             lw_item.setForeground(QColor("#888888"))
         else:
@@ -573,7 +694,10 @@ class TodoPage(BasePage):
         for item in self.data:
             if filt != "All" and item.get("priority") != filt:
                 continue
-            label = f"[{item.get('priority', 'Low')}] {item.get('text', '')}"
+            label = u"[{0}] {1}".format(
+                item.get("priority", "Low"),
+                item.get("text", ""),
+            )
             lw = QListWidgetItem(label)
             done = item.get("done")
             self._style_item(lw, item.get("priority", "Low"), done)
@@ -596,7 +720,10 @@ class TodoPage(BasePage):
     def _find_item_index(self, text, done_flag):
         for i, item in enumerate(self.data):
             if item.get("done") == done_flag:
-                label = f"[{item.get('priority', 'Low')}] {item.get('text', '')}"
+                label = u"[{0}] {1}".format(
+                    item.get("priority", "Low"),
+                    item.get("text", ""),
+                )
                 if label == text:
                     return i
         return None
@@ -637,15 +764,16 @@ class TodoPage(BasePage):
             self.refresh()
 
 
-# ================= NOTES PAGE (subject → unit → notes, Pinterest-ish) =================
+# ================= NOTES PAGE =================
+
 
 class NotesPage(BasePage):
     FNAME = "notes.json"
 
     def __init__(self, goto_page, standalone=False):
         super().__init__(goto_page, standalone)
-        self.data = load_json(self.FNAME, {"folders": {}})
-        self._normalize_data()
+        raw = load_json(self.FNAME, {"folders": {}})
+        self.data = normalize_notes_data(raw)
         self.current_subject = None
         self.current_unit = None
 
@@ -660,7 +788,7 @@ class NotesPage(BasePage):
 
         main_row = QHBoxLayout()
 
-        # left: subject "cards"
+        # Left: subjects list
         left_col = QVBoxLayout()
         subj_header_row = QHBoxLayout()
         subj_header_row.addWidget(QLabel("Subjects"))
@@ -700,16 +828,16 @@ class NotesPage(BasePage):
         left_widget.setLayout(left_col)
         main_row.addWidget(left_widget, 1)
 
-        # right: units + notes editor
+        # Right: units + editor
         right_col = QVBoxLayout()
 
         self.subject_title = QLabel("No subject selected")
         right_col.addWidget(self.subject_title)
 
         unit_row = QHBoxLayout()
+        unit_row.addWidget(QLabel("Unit:"))
         self.unit_combo = QComboBox()
         self.unit_combo.currentTextChanged.connect(self.select_unit)
-        unit_row.addWidget(QLabel("Unit:"))
         unit_row.addWidget(self.unit_combo)
 
         add_unit_btn = QPushButton("Add unit")
@@ -739,54 +867,14 @@ class NotesPage(BasePage):
 
         layout.addLayout(main_row)
         self.setLayout(layout)
-        self.refresh_subjects()
 
-    def _normalize_data(self):
-        """
-        Upgrade old shape {
-           "folders": {"Name": {"content": "..."}}
-        }
-        into new:
-        {
-          "folders": {
-            "Name": {
-              "complete": bool,
-              "units": {
-                "Unit 1": {"content": "..."}
-              }
-            }
-          }
-        }
-        """
-        folders = self.data.get("folders", {})
-        changed = False
-        for name, val in list(folders.items()):
-            if isinstance(val, dict) and "units" not in val:
-                content = val.get("content", "")
-                folders[name] = {
-                    "complete": False,
-                    "units": {
-                        "General": {"content": content}
-                    },
-                }
-                changed = True
-            else:
-                if isinstance(val, dict):
-                    if "complete" not in val:
-                        val["complete"] = False
-                        changed = True
-                    if "units" not in val:
-                        val["units"] = {}
-                        changed = True
-        if changed:
-            self.data["folders"] = folders
-            save_json(self.FNAME, self.data)
+        self.refresh_subjects()
 
     def refresh_subjects(self):
         self.subject_list.clear()
         for name, info in self.data["folders"].items():
             complete = info.get("complete", False)
-            label = f"✓ {name}" if complete else name
+            label = u"✓ {0}".format(name) if complete else name
             item = QListWidgetItem(label)
             item.setData(Qt.UserRole, name)
             self.subject_list.addItem(item)
@@ -811,7 +899,7 @@ class NotesPage(BasePage):
         confirm = QMessageBox.question(
             self,
             "Delete subject",
-            f"Delete subject '{self.current_subject}' and all its units?",
+            u"Delete subject '{0}' and all its units?".format(self.current_subject),
             QMessageBox.Yes | QMessageBox.No,
         )
         if confirm == QMessageBox.Yes:
@@ -841,7 +929,7 @@ class NotesPage(BasePage):
             return
         name = item.data(Qt.UserRole)
         self.current_subject = name
-        self.subject_title.setText("Notes — " + name)
+        self.subject_title.setText(u"Notes — {0}".format(name))
         self.refresh_units()
 
     def refresh_units(self):
@@ -866,8 +954,10 @@ class NotesPage(BasePage):
         if not self.current_subject:
             QMessageBox.information(self, "No subject", "Select a subject first.")
             return
-        default_name = "Unit " + str(len(self.data["folders"][self.current_subject]["units"]) + 1)
-        text, ok = QInputDialog.getText(self, "New unit", "Unit name:", text=default_name)
+        suggested = u"Unit {0}".format(
+            len(self.data["folders"][self.current_subject]["units"]) + 1
+        )
+        text, ok = QInputDialog.getText(self, "New unit", "Unit name:", text=suggested)
         if not ok or not text.strip():
             return
         name = text.strip()
@@ -888,7 +978,7 @@ class NotesPage(BasePage):
         confirm = QMessageBox.question(
             self,
             "Delete unit",
-            f"Delete unit '{self.current_unit}'?",
+            u"Delete unit '{0}'?".format(self.current_unit),
             QMessageBox.Yes | QMessageBox.No,
         )
         if confirm == QMessageBox.Yes:
@@ -902,21 +992,26 @@ class NotesPage(BasePage):
         if not self.current_subject or not unit_name:
             return
         self.current_unit = unit_name
-        content = self.data["folders"][self.current_subject]["units"].get(unit_name, {}).get("content", "")
+        content = (
+            self.data["folders"][self.current_subject]["units"]
+            .get(unit_name, {})
+            .get("content", "")
+        )
         self.text_edit.setPlainText(content)
 
     def save_notes(self):
         if not self.current_subject or not self.current_unit:
             QMessageBox.information(self, "No unit", "Select subject and unit first.")
             return
-        self.data["folders"][self.current_subject]["units"][self.current_unit]["content"] = (
-            self.text_edit.toPlainText()
-        )
+        self.data["folders"][self.current_subject]["units"][self.current_unit][
+            "content"
+        ] = self.text_edit.toPlainText()
         save_json(self.FNAME, self.data)
         QMessageBox.information(self, "Saved", "Notes saved.")
 
 
-# ================= FLASHCARDS (animated, known tracking) =================
+# ================= FLASHCARDS =================
+
 
 class FlashcardsPage(BasePage):
     FNAME = "flashcards.json"
@@ -951,7 +1046,6 @@ class FlashcardsPage(BasePage):
         self.card_label.setStyleSheet(CARD_STYLE + "font-size: 18px;")
         layout.addWidget(self.card_label)
 
-        # opacity effect for animation
         self.effect = QGraphicsOpacityEffect()
         self.card_label.setGraphicsEffect(self.effect)
         self.anim = QPropertyAnimation(self.effect, b"opacity")
@@ -1021,7 +1115,9 @@ class FlashcardsPage(BasePage):
         self.index %= len(self.cards)
         self.show_front = True
         self.card_label.setText(self.cards[self.index].get("front", ""))
-        self.counter_label.setText(f"Card {self.index+1} / {len(self.cards)}")
+        self.counter_label.setText(
+            u"Card {0} / {1}".format(self.index + 1, len(self.cards))
+        )
         self._play_flip_anim()
 
     def flip(self):
@@ -1038,14 +1134,18 @@ class FlashcardsPage(BasePage):
         self.index = (self.index + 1) % len(self.cards)
         self.show_front = True
         self.card_label.setText(self.cards[self.index].get("front", ""))
-        self.counter_label.setText(f"Card {self.index+1} / {len(self.cards)}")
+        self.counter_label.setText(
+            u"Card {0} / {1}".format(self.index + 1, len(self.cards))
+        )
         self._play_flip_anim()
 
     def add_card(self):
         front = self.front_input.text().strip()
         back = self.back_input.text().strip()
         if not front or not back:
-            QMessageBox.information(self, "Missing", "Please fill in both front and back.")
+            QMessageBox.information(
+                self, "Missing", "Please fill in both front and back."
+            )
             return
         self.cards.append({"front": front, "back": back, "known": False})
         save_json(self.FNAME, self.cards)
@@ -1069,7 +1169,8 @@ class FlashcardsPage(BasePage):
         self.next_card()
 
 
-# ================= RESOURCES (subject → unit → links) =================
+# ================= RESOURCES =================
+
 
 class ResourcesPage(BasePage):
     FNAME = "resources.json"
@@ -1150,12 +1251,11 @@ class ResourcesPage(BasePage):
         self.refresh_subjects()
 
     def _normalize_data(self):
-        # old format: list of links
         if isinstance(self.data, list):
             self.data = {"subjects": {"General": {"units": {"All": self.data}}}}
             save_json(self.FNAME, self.data)
             return
-        if "subjects" not in self.data:
+        if "subjects" not in self.data or not isinstance(self.data["subjects"], dict):
             self.data["subjects"] = {}
             save_json(self.FNAME, self.data)
 
@@ -1206,7 +1306,9 @@ class ResourcesPage(BasePage):
         if not self.current_subject:
             QMessageBox.information(self, "No subject", "Select a subject first.")
             return
-        suggested = "Unit " + str(len(self.data["subjects"][self.current_subject]["units"]) + 1)
+        suggested = u"Unit {0}".format(
+            len(self.data["subjects"][self.current_subject]["units"]) + 1
+        )
         text, ok = QInputDialog.getText(self, "New unit", "Unit name:", text=suggested)
         if not ok or not text.strip():
             return
@@ -1231,7 +1333,9 @@ class ResourcesPage(BasePage):
         self.listw.clear()
         if not self.current_subject or not self.current_unit:
             return
-        links = self.data["subjects"][self.current_subject]["units"].get(self.current_unit, [])
+        links = self.data["subjects"][self.current_subject]["units"].get(
+            self.current_unit, []
+        )
         for url in links:
             self.listw.addItem(url)
 
@@ -1241,7 +1345,9 @@ class ResourcesPage(BasePage):
             return
         url = self.link_input.text().strip()
         if not url:
-            QMessageBox.information(self, "Empty link", "Paste a valid URL before adding.")
+            QMessageBox.information(
+                self, "Empty link", "Paste a valid URL before adding."
+            )
             return
         units = self.data["subjects"][self.current_subject]["units"]
         units.setdefault(self.current_unit, []).append(url)
@@ -1253,7 +1359,8 @@ class ResourcesPage(BasePage):
         QDesktopServices.openUrl(QUrl(item.text()))
 
 
-# ================= SCHEDULE (calendar-based) =================
+# ================= SCHEDULE PAGE =================
+
 
 class SchedulePage(BasePage):
     FNAME = "schedule.json"
@@ -1261,12 +1368,7 @@ class SchedulePage(BasePage):
     def __init__(self, goto_page, standalone=False):
         super().__init__(goto_page, standalone)
         raw = load_json(self.FNAME, {})
-        if isinstance(raw, list):
-            self.data = {"__all__": raw}
-        elif isinstance(raw, dict):
-            self.data = raw
-        else:
-            self.data = {}
+        self.data = normalize_schedule_data(raw)
 
         layout = QVBoxLayout()
         layout.setAlignment(Qt.AlignTop)
@@ -1308,17 +1410,15 @@ class SchedulePage(BasePage):
         self.listw.clear()
         key = self._date_key()
         entries = self.data.get(key, [])
-        if not isinstance(entries, list):
-            entries = []
-        self.entries_label.setText(f"Entries for {key}:")
+        self.entries_label.setText(u"Entries for {0}:".format(key))
         for e in entries:
-            self.listw.addItem(str(e))
+            self.listw.addItem(e)
 
         legacy = self.data.get("__all__")
         if legacy:
             self.listw.addItem("---- Legacy entries ----")
             for e in legacy:
-                self.listw.addItem(str(e))
+                self.listw.addItem(e)
 
     def add_entry(self):
         txt = self.input.text().strip()
@@ -1332,7 +1432,8 @@ class SchedulePage(BasePage):
         self.refresh_for_selected_date()
 
 
-# ================= TIMER (flip-ish style) =================
+# ================= TIMER PAGE =================
+
 
 class TimerPage(BasePage):
     def __init__(self, goto_page, standalone=False):
@@ -1354,14 +1455,16 @@ class TimerPage(BasePage):
 
         self.time_label = QLabel("")
         self.time_label.setAlignment(Qt.AlignCenter)
-        self.time_label.setStyleSheet("""
+        self.time_label.setStyleSheet(
+            """
             font-size: 72px;
             font-weight: 600;
             padding: 24px 32px;
             border-radius: 22px;
             background-color: rgba(0, 0, 0, 0.06);
             letter-spacing: 6px;
-        """)
+            """
+        )
         self.time_label.setMinimumHeight(180)
         layout.addWidget(self.time_label)
 
@@ -1407,7 +1510,9 @@ class TimerPage(BasePage):
                 mins = max(1, int(text))
                 self.time_left = mins * 60
             except ValueError:
-                QMessageBox.information(self, "Invalid minutes", "Please enter a whole number.")
+                QMessageBox.information(
+                    self, "Invalid minutes", "Please enter a whole number."
+                )
                 return
         self.running = True
         self.timer.start(1000)
@@ -1436,4 +1541,4 @@ class TimerPage(BasePage):
     def update_label(self):
         mins = self.time_left // 60
         secs = self.time_left % 60
-        self.time_label.setText(f"{mins:02d}:{secs:02d}")
+        self.time_label.setText("{0:02d}:{1:02d}".format(mins, secs))
