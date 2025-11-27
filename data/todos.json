@@ -1,6 +1,12 @@
 [
     {
-        "task": "hi",
-        "priority": "High"
+        "text": "task 1",
+        "priority": "High",
+        "done": true
+    },
+    {
+        "text": "Task 2",
+        "priority": "High",
+        "done": false
     }
 ]

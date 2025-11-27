@@ -1,4 +1,3 @@
-# themes.py
 # Pastel + dark themes, with button colors included.
 
 BASE_WIDGETS = """
@@ -41,6 +40,21 @@ QListWidget {{
 
 QLabel {{
     color: {fg};
+    font-weight: 500;
+}}
+
+QFrame {{
+    background-color: {card_bg};
+}}
+
+QProgressBar {{
+    border-radius: 100px;
+    height: 14px;
+    background-color: {card_bg};
+}}
+QProgressBar::chunk {{
+    border-radius: 100px;
+    background-color: {accent};
 }}
 """
 
